@@ -2,6 +2,7 @@ from copy import copy
 import importlib.util
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 
 from PIL import Image
@@ -49,7 +50,9 @@ class PetVisualTests(unittest.TestCase):
             window.gesture_bounds = copy(cls.gesture_bounds)
             window.pose_bounds = cls.pose_bounds
         window.physics_body = None
-        window.flight_frame = 0
+        window.flight_frame = pet_window.FLIGHT_TAKEOFF_FRAMES[0]
+        window.flight_landing_frame = pet_window.FLIGHT_LANDING_FRAMES[0]
+        window.flight_phase = "takeoff"
         window.landing_started = None
         window.landing_strength = 0.0
         window.reduced_motion = False
@@ -60,13 +63,14 @@ class PetVisualTests(unittest.TestCase):
         window.completion_frame = 0
         window.completion_between_jumps = False
         window.completion_pending = False
+        window.drag_flight_active = False
         window.status = "idle"
         window.row = "idle"
         window.pose = "idle"
         window.frame = 0
         return window
 
-    def test_flight_uses_jumping_row_and_bounds(self):
+    def test_takeoff_uses_visible_jumping_frame_and_bounds(self):
         window = self._make_window()
         window.physics_body = object()
 
@@ -74,9 +78,9 @@ class PetVisualTests(unittest.TestCase):
         row_index = pet_window.ROW_INDEX[pet_window.FLIGHT_ROW]
         row = self.sheet.crop(
             (
-                0,
+                window.flight_frame * pet_window.CELL_W,
                 row_index * pet_window.CELL_H,
-                pet_window.CELL_W,
+                (window.flight_frame + 1) * pet_window.CELL_W,
                 (row_index + 1) * pet_window.CELL_H,
             )
         )
@@ -87,6 +91,89 @@ class PetVisualTests(unittest.TestCase):
             window._active_body_bounds(),
             self.row_bounds[pet_window.FLIGHT_ROW],
         )
+
+    def test_takeoff_skips_standing_edge_frames(self):
+        self.assertEqual(pet_window.FLIGHT_TAKEOFF_FRAMES, (1, 2, 3))
+        self.assertNotIn(0, pet_window.FLIGHT_TAKEOFF_FRAMES)
+        self.assertNotIn(4, pet_window.FLIGHT_TAKEOFF_FRAMES)
+
+    def test_dragging_uses_takeoff_frame_and_bounds(self):
+        window = self._make_window()
+        window._render_frame = lambda: None
+        window._set_drag_flight_active(True)
+
+        self.assertTrue(window.drag_flight_active)
+        actual = window._current_pose_cell(320, 320)
+        row_index = pet_window.ROW_INDEX[pet_window.FLIGHT_ROW]
+        row = self.sheet.crop(
+            (
+                window.flight_frame * pet_window.CELL_W,
+                row_index * pet_window.CELL_H,
+                (window.flight_frame + 1) * pet_window.CELL_W,
+                (row_index + 1) * pet_window.CELL_H,
+            )
+        )
+        expected = pet_window.PetWindow._pose_cell(row)
+
+        self.assertEqual(actual.tobytes(), expected.tobytes())
+        self.assertEqual(
+            window._active_body_bounds(),
+            self.row_bounds[pet_window.FLIGHT_ROW],
+        )
+
+        window.reduced_motion = True
+        window._set_drag_flight_active(True)
+        self.assertFalse(window.drag_flight_active)
+
+    def test_prelanding_uses_spread_wing_frames(self):
+        window = self._make_window()
+        window.physics_body = object()
+        window.flight_phase = "landing"
+        window.flight_landing_frame = 2
+
+        actual = window._current_pose_cell(320, 320)
+        expected = pet_window.PetWindow._pose_cell(
+            self.poses[pet_window.FLIGHT_LANDING_POSE][2],
+        ).resize(
+            (320, 320),
+            Image.Resampling.NEAREST,
+        )
+
+        self.assertEqual(actual.tobytes(), expected.tobytes())
+
+    def test_landed_flight_returns_to_standing_frame(self):
+        window = self._make_window()
+        window.physics_body = object()
+        window.flight_phase = "landed"
+
+        actual = window._current_pose_cell(320, 320)
+        standing = self.sheet.crop(
+            (0, 0, pet_window.CELL_W, pet_window.CELL_H)
+        )
+        expected = pet_window.PetWindow._pose_cell(
+            standing,
+        ).resize(
+            (320, 320),
+            Image.Resampling.NEAREST,
+        )
+
+        self.assertEqual(actual.tobytes(), expected.tobytes())
+
+    def test_descending_near_floor_switches_to_spread_wings(self):
+        window = self._make_window()
+        window._flight_floor_gap = lambda _body: 24.0
+        window._flight_landing_gap_limit = lambda: 30.0
+        window._log = lambda _message: None
+
+        window._update_flight_phase(SimpleNamespace(vy=80.0), False)
+        self.assertEqual(window.flight_phase, "landing")
+
+        window.flight_phase = "takeoff"
+        window._update_flight_phase(SimpleNamespace(vy=-80.0), False)
+        self.assertEqual(window.flight_phase, "takeoff")
+
+        window._update_flight_phase(SimpleNamespace(vy=80.0), True)
+        self.assertEqual(window.flight_phase, "landed")
 
     def test_completion_reminder_uses_two_jumping_row_cycles(self):
         self.assertEqual(pet_window.COMPLETION_JUMP_COUNT, 2)

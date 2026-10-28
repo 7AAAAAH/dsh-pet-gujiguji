@@ -14,8 +14,10 @@ English | [简体中文](README.zh.md)
 - Release a drag to let the pet fall naturally. A quick flick throws it with
   bounded velocity, gravity, wall bounce, floor friction and a short
   bottom-anchored landing squash.
-- The airborne pet switches to the complete takeoff animation, then restores
-  the current task or idle pose after landing.
+- Dragging past the click threshold immediately switches the pet into a visible
+  takeoff cycle. A released pet keeps that cycle while airborne, spreads its
+  wings near the floor, then restores the current task or idle pose after
+  landing.
 - The task bubble temporarily hides while the pet is airborne, then returns
   after the pet settles.
 - While idle, the pet plays a random gesture every 30–75 seconds using a

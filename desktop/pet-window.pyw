@@ -85,6 +85,11 @@ COMPLETION_JUMP_SCALE = 0.4
 COMPLETION_JUMP_COUNT = 2
 COMPLETION_JUMP_GAP_MS = 220
 FLIGHT_ROW = "jumping"
+FLIGHT_TAKEOFF_FRAMES = (1, 2, 3)
+FLIGHT_LANDING_POSE = "cheer"
+FLIGHT_LANDING_FRAMES = (1, 2, 3, 4, 5)
+FLIGHT_LANDING_GAP_RATIO = 0.22
+FLIGHT_LANDING_GAP_MIN = 20
 
 ROWS = [
     ("idle", 6),
@@ -1564,12 +1569,15 @@ class PetWindow:
         self.landing_started = None
         self.landing_strength = 0.0
         self.frame = 0
-        self.flight_frame = 0
+        self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+        self.flight_landing_frame = FLIGHT_LANDING_FRAMES[0]
+        self.flight_phase = "takeoff"
         self.drag_tracker = DragTracker(threshold=DRAG_THRESHOLD_PX)
         self.drag_work_areas = []
         self.drag_position = None
         self.monitor_index = 0
         self.dragged = False
+        self.drag_flight_active = False
         self.anchor_pid = 0
         self.dsh_pid_path = state_path.with_name("dsh.pid")
         self.hidden_path = state_path.with_name("hidden.flag")
@@ -1932,7 +1940,7 @@ class PetWindow:
         )
 
     def _active_body_bounds(self):
-        if self.physics_body is not None:
+        if self.physics_body is not None or self.drag_flight_active:
             return self.row_bounds.get(FLIGHT_ROW, self.pose_bounds)
         if self._completion_active():
             return self.row_bounds.get(FLIGHT_ROW, self.pose_bounds)
@@ -2224,6 +2232,7 @@ class PetWindow:
             self._cancel_idle_gesture()
             self._cancel_completion_jumps(redraw=False)
             self.grab_active = False
+            self._set_drag_flight_active(False, redraw=False)
             self._cancel_landing(redraw=False)
         elif self.status == "idle" and self.pose not in GESTURE_POSES:
             self._schedule_idle_gesture()
@@ -2241,6 +2250,21 @@ class PetWindow:
         self.grab_active = active
         self._render_frame()
 
+    def _set_drag_flight_active(self, active: bool, redraw: bool = True):
+        active = bool(
+            active
+            and not self.reduced_motion
+            and not self.lock_position
+        )
+        if active == self.drag_flight_active:
+            return
+        self.drag_flight_active = active
+        self.flight_phase = "takeoff"
+        if self.flight_frame not in FLIGHT_TAKEOFF_FRAMES:
+            self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+        if redraw:
+            self._render_frame()
+
     def _on_press(self, event):
         self._cancel_completion_jumps()
         self._log(
@@ -2250,6 +2274,7 @@ class PetWindow:
         if self.menu is not None:
             self.menu.close()
         self._cancel_physics(save_position=True)
+        self._set_drag_flight_active(False, redraw=False)
         self._set_grab_feedback(True)
         self.drag_work_areas = self._work_area_rects()
         self.monitor_index = monitor_index_for_rect(
@@ -2278,6 +2303,8 @@ class PetWindow:
             pointer_y,
             time.perf_counter(),
         )
+        if dragged and not self.drag_flight_active:
+            self._set_drag_flight_active(True)
         self.dragged = self.dragged or dragged
         if not dragged or not self.drag_work_areas:
             return dragged
@@ -2333,6 +2360,7 @@ class PetWindow:
         )
         self.drag_position = None
         if not release_dragged:
+            self._set_drag_flight_active(False)
             if self.dragged:
                 return
             self._schedule_single_click()
@@ -2348,6 +2376,9 @@ class PetWindow:
         )
 
     def _start_physics(self, left: float, top: float, vx: float, vy: float):
+        continue_takeoff = self.drag_flight_active
+        takeoff_frame = self.flight_frame
+        self.drag_flight_active = False
         self._cancel_completion_jumps(redraw=False)
         self._cancel_physics(save_position=False)
         self.physics_work_areas = self._work_area_rects()
@@ -2363,8 +2394,15 @@ class PetWindow:
             float(vy),
             self.monitor_index,
         )
-        self.flight_frame = 0
+        self.flight_phase = "takeoff"
+        if continue_takeoff and takeoff_frame in FLIGHT_TAKEOFF_FRAMES:
+            self.flight_frame = takeoff_frame
+        else:
+            self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+        self.flight_landing_frame = FLIGHT_LANDING_FRAMES[0]
         self.physics_last_tick = time.perf_counter()
+        if vy >= 0 and self._flight_floor_gap(self.physics_body) <= self._flight_landing_gap_limit():
+            self.flight_phase = "landing"
         self.bubble.set_motion_hidden(True)
         self._log(
             f"physics start x={left} y={top} "
@@ -2375,6 +2413,44 @@ class PetWindow:
             PHYSICS_FRAME_MS,
             self._tick_physics,
         )
+
+    def _flight_floor_gap(self, body) -> float:
+        if body is None or not self.physics_work_areas:
+            return float("inf")
+        monitor_index = min(
+            max(0, body.monitor_index),
+            len(self.physics_work_areas) - 1,
+        )
+        monitor = self.physics_work_areas[monitor_index]
+        bounds = self._body_geometry().bounds_at(body.x, body.y)
+        return max(0.0, monitor.bottom - bounds.bottom)
+
+    def _flight_landing_gap_limit(self) -> float:
+        return max(
+            FLIGHT_LANDING_GAP_MIN,
+            self._display_height() * FLIGHT_LANDING_GAP_RATIO,
+        )
+
+    def _update_flight_phase(self, body, landed: bool):
+        if landed:
+            self.flight_phase = "landed"
+            return
+        if self.flight_phase != "takeoff" or body.vy < 0:
+            return
+        gap = self._flight_floor_gap(body)
+        if gap > self._flight_landing_gap_limit():
+            return
+        self.flight_phase = "landing"
+        self.flight_landing_frame = FLIGHT_LANDING_FRAMES[0]
+        self._log(f"flight landing approach gap={round(gap)}")
+
+    @staticmethod
+    def _next_flight_frame(current: int, frames: tuple[int, ...]) -> int:
+        try:
+            index = frames.index(current)
+        except ValueError:
+            index = 0
+        return frames[(index + 1) % len(frames)]
 
     def _start_landing(self, impact_speed: float):
         self._cancel_landing(redraw=False)
@@ -2428,6 +2504,7 @@ class PetWindow:
         )
         self.physics_body = result.body
         self.monitor_index = result.body.monitor_index
+        self._update_flight_phase(result.body, result.landed)
         left = round(result.body.x)
         top = round(result.body.y)
         if left != self.root.winfo_x() or top != self.root.winfo_y():
@@ -2449,7 +2526,10 @@ class PetWindow:
     def _finish_physics(self):
         body = self.physics_body
         self.physics_body = None
-        self.flight_frame = 0
+        self.drag_flight_active = False
+        self.flight_phase = "takeoff"
+        self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+        self.flight_landing_frame = FLIGHT_LANDING_FRAMES[0]
         self.physics_last_tick = None
         self.physics_work_areas = []
         if body is not None:
@@ -2471,6 +2551,7 @@ class PetWindow:
             or self.physics_after_job is not None
             or self.landing_started is not None
             or self.grab_active
+            or self.drag_flight_active
         )
         self._cancel_landing(redraw=False)
         if self.physics_after_job is not None:
@@ -2481,7 +2562,10 @@ class PetWindow:
             self.physics_after_job = None
         body = self.physics_body
         self.physics_body = None
-        self.flight_frame = 0
+        self.drag_flight_active = False
+        self.flight_phase = "takeoff"
+        self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+        self.flight_landing_frame = FLIGHT_LANDING_FRAMES[0]
         self.grab_active = False
         self.physics_last_tick = None
         self.physics_work_areas = []
@@ -3146,9 +3230,26 @@ class PetWindow:
 
     def _tick_animation(self):
         if self.physics_body is not None:
-            self.flight_frame = (
-                self.flight_frame + 1
-            ) % ROW_FRAMES[ROW_INDEX[FLIGHT_ROW]]
+            if self.flight_phase == "landing":
+                self.flight_landing_frame = self._next_flight_frame(
+                    self.flight_landing_frame,
+                    FLIGHT_LANDING_FRAMES,
+                )
+                delay = POSE_FRAME_MS.get(FLIGHT_LANDING_POSE, 190)
+            elif self.flight_phase == "landed":
+                delay = 1000
+            else:
+                self.flight_frame = self._next_flight_frame(
+                    self.flight_frame,
+                    FLIGHT_TAKEOFF_FRAMES,
+                )
+                delay = FRAME_MS[FLIGHT_ROW]
+            self._render_frame()
+        elif self.drag_flight_active:
+            self.flight_frame = self._next_flight_frame(
+                self.flight_frame,
+                FLIGHT_TAKEOFF_FRAMES,
+            )
             delay = FRAME_MS[FLIGHT_ROW]
             self._render_frame()
         elif self._completion_active():
@@ -3177,6 +3278,24 @@ class PetWindow:
 
     def _current_pose_cell(self, display_w: int, display_h: int):
         if self.physics_body is not None:
+            if self.flight_phase == "landing" and FLIGHT_LANDING_POSE in self.poses:
+                frames = self.poses[FLIGHT_LANDING_POSE]
+                cell = frames[self.flight_landing_frame % len(frames)]
+            elif self.flight_phase == "landed":
+                cell = self.sheet.crop((0, 0, CELL_W, CELL_H))
+            else:
+                row_index = ROW_INDEX[FLIGHT_ROW]
+                left = self.flight_frame * CELL_W
+                top = row_index * CELL_H
+                cell = self.sheet.crop(
+                    (left, top, left + CELL_W, top + CELL_H)
+                )
+            cell = self._pose_cell(cell)
+            return cell.resize(
+                (display_w, display_h),
+                Image.Resampling.NEAREST,
+            )
+        if self.drag_flight_active:
             row_index = ROW_INDEX[FLIGHT_ROW]
             left = self.flight_frame * CELL_W
             top = row_index * CELL_H
