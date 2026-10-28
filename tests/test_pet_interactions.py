@@ -48,6 +48,7 @@ class DoubleClickTests(unittest.TestCase):
         events = []
         window = object.__new__(pet_window.PetWindow)
         window.dragged = False
+        window.drag_flight_job = None
         window.root = FakeRoot(events)
         window.bubble = FakeBubble(events)
         window._cancel_single_click = lambda: events.append("cancel-single")

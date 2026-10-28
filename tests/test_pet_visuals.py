@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
 from PIL import Image
 
@@ -50,7 +51,7 @@ class PetVisualTests(unittest.TestCase):
             window.gesture_bounds = copy(cls.gesture_bounds)
             window.pose_bounds = cls.pose_bounds
         window.physics_body = None
-        window.flight_frame = pet_window.FLIGHT_TAKEOFF_FRAMES[0]
+        window.flight_frame = pet_window.FLIGHT_TAKEOFF_START_FRAME
         window.flight_landing_frame = pet_window.FLIGHT_LANDING_FRAMES[0]
         window.flight_phase = "takeoff"
         window.landing_started = None
@@ -64,6 +65,8 @@ class PetVisualTests(unittest.TestCase):
         window.completion_between_jumps = False
         window.completion_pending = False
         window.drag_flight_active = False
+        window.drag_flight_job = None
+        window._log = lambda _message: None
         window.status = "idle"
         window.row = "idle"
         window.pose = "idle"
@@ -124,6 +127,37 @@ class PetVisualTests(unittest.TestCase):
         window.reduced_motion = True
         window._set_drag_flight_active(True)
         self.assertFalse(window.drag_flight_active)
+
+    def test_drag_hold_timer_activates_takeoff(self):
+        window = self._make_window()
+        window.root = Mock()
+        window.root.after.return_value = "drag-hold-job"
+        window._render_frame = lambda: None
+        window._log = lambda _message: None
+
+        window._schedule_drag_flight_hold()
+
+        delay, callback = window.root.after.call_args.args
+        self.assertEqual(delay, pet_window.DRAG_FLIGHT_HOLD_MS)
+        window.drag_tracker = SimpleNamespace(press_pointer=(100, 100))
+        window.root.winfo_pointerxy.return_value = (120, 100)
+        callback()
+        self.assertTrue(window.drag_flight_active)
+        self.assertEqual(
+            window.flight_frame,
+            pet_window.FLIGHT_TAKEOFF_START_FRAME,
+        )
+
+    def test_drag_motion_activates_takeoff_callback(self):
+        window = self._make_window()
+        window._render_frame = lambda: None
+        window.drag_tracker = SimpleNamespace(dragged=True)
+        window._move_drag_to = lambda _x, _y: True
+
+        window._on_drag(SimpleNamespace(x_root=120, y_root=140))
+
+        self.assertTrue(window.drag_flight_active)
+        self.assertEqual(window.flight_frame, pet_window.FLIGHT_TAKEOFF_START_FRAME)
 
     def test_prelanding_uses_spread_wing_frames(self):
         window = self._make_window()

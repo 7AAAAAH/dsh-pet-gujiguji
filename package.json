@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-gujiguji",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "type": "module",
   "description": "GujiGuji desktop pet for DeepSeek Harness: a lightweight bird companion that reacts to the active agent status, mirroring the Codex desktop pet.",
   "license": "MIT",

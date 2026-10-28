@@ -86,6 +86,7 @@ COMPLETION_JUMP_COUNT = 2
 COMPLETION_JUMP_GAP_MS = 220
 FLIGHT_ROW = "jumping"
 FLIGHT_TAKEOFF_FRAMES = (1, 2, 3)
+FLIGHT_TAKEOFF_START_FRAME = FLIGHT_TAKEOFF_FRAMES[1]
 FLIGHT_LANDING_POSE = "cheer"
 FLIGHT_LANDING_FRAMES = (1, 2, 3, 4, 5)
 FLIGHT_LANDING_GAP_RATIO = 0.22
@@ -147,6 +148,7 @@ MARQUEE_STEP_MS = 38
 OVERLAY_HEALTH_CHECK_MS = 2000
 PHYSICS_FRAME_MS = 16
 DRAG_THRESHOLD_PX = 5
+DRAG_FLIGHT_HOLD_MS = 120
 LANDING_DURATION_MS = 170
 LANDING_FRAME_MS = 33
 GRAB_SCALE_X = 0.985
@@ -1569,7 +1571,7 @@ class PetWindow:
         self.landing_started = None
         self.landing_strength = 0.0
         self.frame = 0
-        self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+        self.flight_frame = FLIGHT_TAKEOFF_START_FRAME
         self.flight_landing_frame = FLIGHT_LANDING_FRAMES[0]
         self.flight_phase = "takeoff"
         self.drag_tracker = DragTracker(threshold=DRAG_THRESHOLD_PX)
@@ -1578,6 +1580,7 @@ class PetWindow:
         self.monitor_index = 0
         self.dragged = False
         self.drag_flight_active = False
+        self.drag_flight_job = None
         self.anchor_pid = 0
         self.dsh_pid_path = state_path.with_name("dsh.pid")
         self.hidden_path = state_path.with_name("hidden.flag")
@@ -2229,6 +2232,7 @@ class PetWindow:
             return
         self.reduced_motion = reduced
         if reduced:
+            self._cancel_drag_flight_hold()
             self._cancel_idle_gesture()
             self._cancel_completion_jumps(redraw=False)
             self.grab_active = False
@@ -2260,10 +2264,46 @@ class PetWindow:
             return
         self.drag_flight_active = active
         self.flight_phase = "takeoff"
-        if self.flight_frame not in FLIGHT_TAKEOFF_FRAMES:
-            self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+        if active:
+            self.flight_frame = FLIGHT_TAKEOFF_START_FRAME
+        self._log(
+            f"drag flight active={self.drag_flight_active} "
+            f"frame={self.flight_frame} phase={self.flight_phase}"
+        )
         if redraw:
             self._render_frame()
+
+    def _schedule_drag_flight_hold(self):
+        self._cancel_drag_flight_hold()
+        if self.reduced_motion or self.lock_position:
+            return
+        self.drag_flight_job = self.root.after(
+            DRAG_FLIGHT_HOLD_MS,
+            self._activate_drag_flight_from_hold,
+        )
+
+    def _activate_drag_flight_from_hold(self):
+        self.drag_flight_job = None
+        press_pointer = self.drag_tracker.press_pointer
+        if press_pointer is None:
+            return
+        try:
+            pointer = self.root.winfo_pointerxy()
+        except tk.TclError:
+            return
+        dx = pointer[0] - press_pointer[0]
+        dy = pointer[1] - press_pointer[1]
+        if dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX:
+            self._set_drag_flight_active(True)
+
+    def _cancel_drag_flight_hold(self):
+        if self.drag_flight_job is None:
+            return
+        try:
+            self.root.after_cancel(self.drag_flight_job)
+        except tk.TclError:
+            pass
+        self.drag_flight_job = None
 
     def _on_press(self, event):
         self._cancel_completion_jumps()
@@ -2294,6 +2334,7 @@ class PetWindow:
         )
         self.drag_position = (self.root.winfo_x(), self.root.winfo_y())
         self.dragged = False
+        self._schedule_drag_flight_hold()
 
     def _move_drag_to(self, pointer_x: float, pointer_y: float) -> bool:
         if self.lock_position:
@@ -2331,8 +2372,11 @@ class PetWindow:
 
     def _on_drag(self, event):
         self._move_drag_to(event.x_root, event.y_root)
+        if self.drag_tracker.dragged:
+            self._set_drag_flight_active(True)
 
     def _on_release(self, event):
+        self._cancel_drag_flight_hold()
         self._set_grab_feedback(False)
         if self.lock_position:
             self.drag_tracker.reset()
@@ -2398,7 +2442,7 @@ class PetWindow:
         if continue_takeoff and takeoff_frame in FLIGHT_TAKEOFF_FRAMES:
             self.flight_frame = takeoff_frame
         else:
-            self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+            self.flight_frame = FLIGHT_TAKEOFF_START_FRAME
         self.flight_landing_frame = FLIGHT_LANDING_FRAMES[0]
         self.physics_last_tick = time.perf_counter()
         if vy >= 0 and self._flight_floor_gap(self.physics_body) <= self._flight_landing_gap_limit():
@@ -2528,7 +2572,7 @@ class PetWindow:
         self.physics_body = None
         self.drag_flight_active = False
         self.flight_phase = "takeoff"
-        self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+        self.flight_frame = FLIGHT_TAKEOFF_START_FRAME
         self.flight_landing_frame = FLIGHT_LANDING_FRAMES[0]
         self.physics_last_tick = None
         self.physics_work_areas = []
@@ -2564,7 +2608,7 @@ class PetWindow:
         self.physics_body = None
         self.drag_flight_active = False
         self.flight_phase = "takeoff"
-        self.flight_frame = FLIGHT_TAKEOFF_FRAMES[0]
+        self.flight_frame = FLIGHT_TAKEOFF_START_FRAME
         self.flight_landing_frame = FLIGHT_LANDING_FRAMES[0]
         self.grab_active = False
         self.physics_last_tick = None
@@ -2834,6 +2878,7 @@ class PetWindow:
             self.bubble.place()
 
     def _on_double_click(self, _event):
+        self._cancel_drag_flight_hold()
         if self.dragged:
             return "break"
         self._cancel_single_click()
@@ -2868,6 +2913,7 @@ class PetWindow:
         return self.status in ("running", "waiting", "failed", "review")
 
     def _on_right_click(self, event):
+        self._cancel_drag_flight_hold()
         self._cancel_completion_jumps()
         self._cancel_physics(save_position=True)
         if self.menu is not None:
