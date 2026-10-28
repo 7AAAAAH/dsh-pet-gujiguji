@@ -1,21 +1,23 @@
 /**
- * Host half of dsh-mint-budgie.
+ * Host half of dsh-pet-gujiguji.
  *
  * Mirrors the Codex desktop pet's "reacts to agent state" behaviour inside
- * DeepSeek Harness. The browser client renders a sprite-sheet pet (Mint Budgie)
+ * DeepSeek Harness. The browser client renders a sprite-sheet pet (GujiGuji)
  * and swaps which animation row it plays based on the active agent's status.
  * This Host half does three things so the pet works without a custom build:
  *
- *   1. Serves the spritesheet bytes at /dsh-mint-budgie/spritesheet.webp (the
+ *   1. Serves the spritesheet bytes at /dsh-pet-gujiguji/spritesheet.webp (the
  *      client cannot import from inside the app bundle, so it fetches them).
  *   2. Tracks the dominant live agent status and broadcasts it over SSE at
- *      /dsh-mint-budgie/state, so every open page sees the same state.
+ *      /dsh-pet-gujiguji/state, so every open page sees the same state.
  *   3. Persists the last status to state.json so a fresh page starts correct.
  *
  * `Agent.status` is only `idle | running`, so three signals feed the pet:
  * the status poll (running), `agent/error` (a short failed reaction) and the
- * `approval/request` waterfall (waiting). The remaining sheet rows stay
- * client-side because no stable Host signal selects them yet.
+ * `approval/request` waterfall (waiting). A completed `turn/end` increments a
+ * one-shot completion sequence so the desktop pet can play its success hops.
+ * The remaining sheet rows stay client-side because no stable Host signal
+ * selects them yet.
  */
 
 import { readFile, writeFile } from 'node:fs/promises'
@@ -37,7 +39,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** Cordis function-plugin name. */
-export const name = 'dsh-mint-budgie'
+export const name = 'dsh-pet-gujiguji'
 
 /** Host services we depend on. */
 export const inject = ['webServer', 'connection', 'agents']
@@ -45,9 +47,9 @@ export const inject = ['webServer', 'connection', 'agents']
 const SPRITE_PATH = join(dirname(fileURLToPath(import.meta.url)), 'assets', 'spritesheet.webp')
 const STATE_PATH = join(dirname(fileURLToPath(import.meta.url)), 'state.json')
 
-const STATUS_PATH = '/dsh-mint-budgie/state'
-const SPRITE_ROUTE = '/dsh-mint-budgie/spritesheet.webp'
-const SETTINGS_ROUTE = '/dsh-mint-budgie/settings'
+const STATUS_PATH = '/dsh-pet-gujiguji/state'
+const SPRITE_ROUTE = '/dsh-pet-gujiguji/spritesheet.webp'
+const SETTINGS_ROUTE = '/dsh-pet-gujiguji/settings'
 
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url))
 const DESKTOP_DIR = join(PLUGIN_DIR, 'desktop')
@@ -59,7 +61,11 @@ const DESKTOP_SPRITE = join(PLUGIN_DIR, 'assets', 'spritesheet.png')
 const DESKTOP_PROCESS_PATH = join(DESKTOP_DIR, 'pet.pid')
 const DESKTOP_DSH_PID_PATH = join(DESKTOP_DIR, 'dsh.pid')
 const DESKTOP_HIDDEN_PATH = join(DESKTOP_DIR, 'hidden.flag')
-const USER_DATA_DIR = join(process.env.APPDATA || homedir(), 'dsh-mint-budgie')
+const USER_DATA_DIR = join(process.env.APPDATA || homedir(), 'dsh-pet-gujiguji')
+const LEGACY_USER_DATA_DIRS = [
+  join(process.env.APPDATA || homedir(), 'dsh-light-feather'),
+  join(process.env.APPDATA || homedir(), 'dsh-mint-budgie'),
+]
 const USER_STATE_PATH = join(USER_DATA_DIR, 'state.json')
 const USER_POSITION_PATH = join(USER_DATA_DIR, 'position.json')
 const USER_SETTINGS_PATH = join(USER_DATA_DIR, 'settings.json')
@@ -70,6 +76,13 @@ const FAILED_HOLD_MS = 4000
 /** Poll cadence for `Agent.status`, which only toggles idle/running. */
 const POLL_MS = 500
 const DEFAULT_RUNNING_ACTIVITY = '正在分析请求'
+
+/** Whether a session event represents a normal, successfully completed turn. */
+export function isCompletedTurn(event) {
+  if (event?.type !== 'turn/end') return false
+  const reason = event?.data?.reason ?? event?.reason
+  return reason?.kind === 'completed' || reason === 'completed'
+}
 
 function callArguments(value) {
   if (typeof value === 'string') {
@@ -315,7 +328,9 @@ function createDesktopPet(ctx) {
       const versioned = readdirSync(DESKTOP_DIR, { withFileTypes: true })
         .filter((entry) => entry.isFile())
         .map((entry) => {
-          const match = entry.name.match(/^mint-budgie-(\d+)\.(\d+)\.(\d+)\.exe$/i)
+          const match = entry.name.match(
+            /^(?:dsh-pet-gujiguji|light-feather|mint-budgie)-(\d+)\.(\d+)\.(\d+)\.exe$/i,
+          )
           if (!match) return null
           return {
             path: join(DESKTOP_DIR, entry.name),
@@ -335,19 +350,30 @@ function createDesktopPet(ctx) {
     } catch {
       // Fall through to the legacy single executable.
     }
-    const legacy = join(DESKTOP_DIR, 'mint-budgie.exe')
-    return existsSync(legacy) ? legacy : null
+    for (const name of ['dsh-pet-gujiguji.exe', 'light-feather.exe', 'mint-budgie.exe']) {
+      const legacy = join(DESKTOP_DIR, name)
+      if (existsSync(legacy)) return legacy
+    }
+    return null
   }
 
   function seedUserFiles() {
     try {
       mkdirSync(USER_DATA_DIR, { recursive: true })
-      if (!existsSync(USER_POSITION_PATH) && existsSync(DESKTOP_POSITION_PATH)) {
-        copyFileSync(DESKTOP_POSITION_PATH, USER_POSITION_PATH)
+      const migrate = (name, localSource, target) => {
+        if (existsSync(target)) return
+        const legacySource = LEGACY_USER_DATA_DIRS
+          .map((directory) => join(directory, name))
+          .find((candidate) => existsSync(candidate))
+        if (legacySource) copyFileSync(legacySource, target)
+        else if (existsSync(localSource)) copyFileSync(localSource, target)
       }
-      if (!existsSync(USER_SETTINGS_PATH) && existsSync(DESKTOP_DEFAULT_SETTINGS_PATH)) {
-        copyFileSync(DESKTOP_DEFAULT_SETTINGS_PATH, USER_SETTINGS_PATH)
-      }
+      migrate('position.json', DESKTOP_POSITION_PATH, USER_POSITION_PATH)
+      migrate(
+        'settings.json',
+        DESKTOP_DEFAULT_SETTINGS_PATH,
+        USER_SETTINGS_PATH,
+      )
     } catch {
       // The packaged defaults remain usable if the migration fails.
     }
@@ -371,7 +397,7 @@ function createDesktopPet(ctx) {
     'python.exe',
   ].filter((value) => typeof value === 'string' && value.length > 0)
 
-  function writeDesktopState(status, task, sessionId, activity) {
+  function writeDesktopState(status, task, sessionId, activity, completionSeq = 0) {
     try {
       mkdirSync(USER_DATA_DIR, { recursive: true })
       if (!existsSync(USER_STATE_PATH)) {
@@ -392,6 +418,7 @@ function createDesktopPet(ctx) {
         task: task ?? '',
         activity: activity ?? '',
         sessionId: sessionId ?? '',
+        completionSeq,
         // Status is authoritative here. A stale session projection can keep
         // an old turn marked open after the selected agent has gone idle.
         working: status !== 'idle',
@@ -558,8 +585,8 @@ function createDesktopPet(ctx) {
       child = null
       try { unlinkSync(DESKTOP_PROCESS_PATH) } catch { /* optional */ }
     },
-    update(status, task, sessionId, activity) {
-      writeDesktopState(status, task, sessionId, activity)
+    update(status, task, sessionId, activity, completionSeq = 0) {
+      writeDesktopState(status, task, sessionId, activity, completionSeq)
     },
     stop() {
       stopping = true
@@ -584,6 +611,7 @@ export function apply(ctx) {
   let failedUntil = 0
   let latestActivity = ''
   let lastActivity = ''
+  let completionSeq = 0
   const clients = new Set()
   const desktop = createDesktopPet(ctx)
   try {
@@ -638,7 +666,13 @@ export function apply(ctx) {
     const payload = currentPayload(current)
     persistStatus(payload)
     broadcast(current, payload)
-    desktop.update(payload.status, payload.task, payload.sessionId, payload.activity)
+    desktop.update(
+      payload.status,
+      payload.task,
+      payload.sessionId,
+      payload.activity,
+      completionSeq,
+    )
   }
 
   /**
@@ -746,6 +780,18 @@ export function apply(ctx) {
     } else if (event?.type === 'turn/end') {
       latestActivity = ''
       sample()
+      if (isCompletedTurn(event)) {
+        completionSeq += 1
+        const task = currentTask()
+        const sessionId = currentSessionId()
+        desktop.update(
+          current,
+          task,
+          sessionId,
+          activityForStatus(current),
+          completionSeq,
+        )
+      }
     }
   }, { global: true }), `${name}: turn activity`)
 
@@ -778,7 +824,7 @@ export function apply(ctx) {
       const task = currentTask()
       const sessionId = currentSessionId()
       const activity = activityForStatus(current)
-      desktop.update(current, task, sessionId, activity)
+      desktop.update(current, task, sessionId, activity, completionSeq)
       if (task !== desktop.lastTask) {
         desktop.lastTask = task
         broadcast(current, { ...currentPayload(current), task, sessionId, activity })
@@ -795,7 +841,13 @@ export function apply(ctx) {
 
   // Seed once so the overlay and a freshly registered client see a real value.
   const initial = currentPayload(current)
-  desktop.update(initial.status, initial.task, initial.sessionId, initial.activity)
+  desktop.update(
+    initial.status,
+    initial.task,
+    initial.sessionId,
+    initial.activity,
+    completionSeq,
+  )
   sample()
   desktop.ensure()
 }

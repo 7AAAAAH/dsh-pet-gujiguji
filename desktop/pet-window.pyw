@@ -1,4 +1,4 @@
-"""Mint Budgie desktop overlay for DeepSeek Harness.
+"""GujiGuji desktop overlay for DeepSeek Harness.
 
 The dsh Host writes state.json. This independent process polls that file,
 plays the matching sprite row, and shows a Codex-style task bubble only while
@@ -48,14 +48,21 @@ MAX_SIZE_PERCENT = 180
 DEFAULT_OPACITY_PERCENT = 75
 MIN_OPACITY_PERCENT = 20
 MAX_OPACITY_PERCENT = 100
+DEFAULT_THROW_POWER_PERCENT = 100
+MIN_THROW_POWER_PERCENT = 50
+MAX_THROW_POWER_PERCENT = 150
+DEFAULT_IDLE_INTERVAL_PERCENT = 100
+MIN_IDLE_INTERVAL_PERCENT = 50
+MAX_IDLE_INTERVAL_PERCENT = 200
 MIN_SETTINGS_WIDTH = 320
-MIN_SETTINGS_HEIGHT = 230
+MIN_SETTINGS_HEIGHT = 300
 DEFAULT_SETTINGS_WIDTH = 420
-DEFAULT_SETTINGS_HEIGHT = 270
+DEFAULT_SETTINGS_HEIGHT = 330
 POSE_NAMES = ("idle", "head-tilt", "head-stretch", "cheer", "wave")
 GESTURE_POSES = ("head-tilt", "head-stretch", "cheer", "wave")
 CLICK_POSES = ("head-tilt", "head-stretch", "cheer", "wave")
 IDLE_POSES = CLICK_POSES
+DOUBLE_CLICK_POSES = ("head-tilt", "head-stretch")
 IDLE_GESTURE_MIN_DELAY_MS = 30_000
 IDLE_GESTURE_MAX_DELAY_MS = 75_000
 STAND_FRAME_MS = 80
@@ -74,6 +81,10 @@ POSE_FRAME_COUNTS = {
     "wave": 7,
 }
 RUNNING_JUMP_SCALE = 0.4
+COMPLETION_JUMP_SCALE = 0.4
+COMPLETION_JUMP_COUNT = 2
+COMPLETION_JUMP_GAP_MS = 220
+FLIGHT_ROW = "jumping"
 
 ROWS = [
     ("idle", 6),
@@ -131,9 +142,10 @@ MARQUEE_STEP_MS = 38
 OVERLAY_HEALTH_CHECK_MS = 2000
 PHYSICS_FRAME_MS = 16
 DRAG_THRESHOLD_PX = 5
-DRAG_THROW_POWER = 1.0
-LANDING_DURATION_MS = 220
+LANDING_DURATION_MS = 170
 LANDING_FRAME_MS = 33
+GRAB_SCALE_X = 0.985
+GRAB_SCALE_Y = 1.018
 
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\msyh.ttc",
@@ -201,6 +213,14 @@ def fit_text(draw, text: str, font, max_width: int) -> str:
 
 def clamp(value: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(value, maximum))
+
+
+def parse_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 class RoundedButton(tk.Canvas):
@@ -386,6 +406,21 @@ class SettingSlider:
         self.reset_label.place(x=value_left + 4, y=self.y + 34)
         self._draw_track()
 
+    def set_visible(self, visible: bool):
+        widgets = (
+            self.title_label,
+            self.hint_label,
+            self.track,
+            self.entry,
+            self.percent_label,
+            self.reset_label,
+        )
+        if visible:
+            self.layout()
+        else:
+            for widget in widgets:
+                widget.place_forget()
+
     def _thumb_x(self, width: int) -> int:
         fraction = (self.value - self.minimum) / (self.maximum - self.minimum)
         return round(9 + fraction * max(0, width - 18))
@@ -468,6 +503,173 @@ class SettingSlider:
             self.value_var.set(str(self.value))
             return
         self.set_value(value, True)
+
+
+class SettingToggle:
+    """Compact labelled switch used for interaction preferences."""
+
+    def __init__(
+        self,
+        parent,
+        y: int,
+        title: str,
+        hint: str,
+        value: bool,
+        command,
+        layout,
+    ):
+        self.parent = parent
+        self.y = y
+        self.command = command
+        self.layout_callback = layout
+        self.value = bool(value)
+        self.title_label = tk.Label(
+            parent,
+            text=title,
+            bg=CARD_BG,
+            fg=TEXT,
+            font=("Microsoft YaHei UI", 10, "bold"),
+        )
+        self.hint_label = tk.Label(
+            parent,
+            text=hint,
+            bg=CARD_BG,
+            fg=TEXT_MUTED,
+            font=("Microsoft YaHei UI", 8),
+        )
+        self.state_label = tk.Label(
+            parent,
+            text="",
+            bg=CARD_BG,
+            fg=TEXT_MUTED,
+            font=("Microsoft YaHei UI", 9),
+        )
+        self.switch = tk.Canvas(
+            parent,
+            width=44,
+            height=24,
+            bg=CARD_BG,
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        self.switch.bind("<Button-1>", self._toggle)
+        self._draw_switch()
+        self.layout()
+
+    def layout(self):
+        left, width = self.layout_callback()
+        self.title_label.place(x=left, y=self.y)
+        self.hint_label.place(x=left, y=self.y + 21)
+        self.state_label.place(x=left + width - 98, y=self.y + 5)
+        self.switch.place(x=left + width - 48, y=self.y + 5)
+
+    def set_visible(self, visible: bool):
+        if visible:
+            self.layout()
+        else:
+            for widget in (
+                self.title_label,
+                self.hint_label,
+                self.state_label,
+                self.switch,
+            ):
+                widget.place_forget()
+
+    def _draw_switch(self):
+        self.switch.delete("all")
+        fill = "#9ad8b8" if self.value else "#4b4b4b"
+        self.switch.create_oval(2, 2, 24, 24, fill=fill, outline=fill)
+        self.switch.create_oval(20, 2, 42, 24, fill=fill, outline=fill)
+        self.switch.create_rectangle(12, 3, 32, 23, fill=fill, outline=fill)
+        knob_x = 23 if self.value else 1
+        self.switch.create_oval(
+            knob_x,
+            2,
+            knob_x + 20,
+            22,
+            fill="#f0f0f0",
+            outline="#f0f0f0",
+        )
+        self.state_label.configure(text="\u5f00\u542f" if self.value else "\u5173\u95ed")
+
+    def _toggle(self, _event=None):
+        self.value = not self.value
+        self._draw_switch()
+        self.command(self.value)
+
+
+class SettingAction:
+    """Compact rounded action used by the behaviour settings page."""
+
+    WIDTH = 150
+    HEIGHT = 30
+
+    def __init__(self, parent, y: int, text: str, command, layout):
+        self.parent = parent
+        self.y = y
+        self.command = command
+        self.layout_callback = layout
+        self.hovered = False
+        self.photo = None
+        self.canvas = tk.Canvas(
+            parent,
+            width=self.WIDTH,
+            height=self.HEIGHT,
+            bg=CARD_BG,
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        self.canvas.bind("<Button-1>", lambda _event: self.command())
+        self.canvas.bind("<Enter>", self._on_enter)
+        self.canvas.bind("<Leave>", self._on_leave)
+        self.text = text
+        self.layout()
+
+    def layout(self):
+        left, _width = self.layout_callback()
+        self.canvas.place(
+            x=left,
+            y=self.y,
+            width=self.WIDTH,
+            height=self.HEIGHT,
+        )
+        self._draw()
+
+    def set_visible(self, visible: bool):
+        if visible:
+            self.layout()
+        else:
+            self.canvas.place_forget()
+
+    def _on_enter(self, _event):
+        self.hovered = True
+        self._draw()
+
+    def _on_leave(self, _event):
+        self.hovered = False
+        self._draw()
+
+    def _draw(self):
+        fill = (58, 64, 74, 255) if self.hovered else (48, 52, 60, 255)
+        image = rounded_card(
+            self.WIDTH,
+            self.HEIGHT,
+            radius=8,
+            fill=fill,
+            outline=(255, 255, 255, 20),
+        )
+        self.photo = keyed_photo(image)
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, image=self.photo, anchor="nw")
+        self.canvas.create_text(
+            self.WIDTH // 2,
+            self.HEIGHT // 2,
+            text=self.text,
+            fill=TEXT,
+            font=("Microsoft YaHei UI", 9),
+        )
 
 
 def enable_dpi_awareness():
@@ -983,6 +1185,7 @@ class SettingsWindow:
     def __init__(self, pet):
         self.pet = pet
         self.width, self.height = self._load_size()
+        self.page = "general"
         self.resize_origin = None
         self.resize_start = None
         self.window = tk.Toplevel(pet.root)
@@ -1035,6 +1238,43 @@ class SettingsWindow:
         )
         self.title.place(x=self.PAD, y=17)
 
+        self.general_tab = tk.Label(
+            self.window,
+            text="\u901a\u7528",
+            bg=CARD_BG,
+            fg=TEXT,
+            cursor="hand2",
+            font=("Microsoft YaHei UI", 9, "bold"),
+        )
+        self.general_tab.bind(
+            "<Button-1>",
+            lambda _event: self._set_page("general"),
+        )
+        self.interaction_tab = tk.Label(
+            self.window,
+            text="\u4ea4\u4e92",
+            bg=CARD_BG,
+            fg=TEXT_MUTED,
+            cursor="hand2",
+            font=("Microsoft YaHei UI", 9),
+        )
+        self.interaction_tab.bind(
+            "<Button-1>",
+            lambda _event: self._set_page("interaction"),
+        )
+        self.behavior_tab = tk.Label(
+            self.window,
+            text="\u884c\u4e3a",
+            bg=CARD_BG,
+            fg=TEXT_MUTED,
+            cursor="hand2",
+            font=("Microsoft YaHei UI", 9),
+        )
+        self.behavior_tab.bind(
+            "<Button-1>",
+            lambda _event: self._set_page("behavior"),
+        )
+
         self.close_button = tk.Canvas(
             self.window,
             width=28,
@@ -1050,7 +1290,7 @@ class SettingsWindow:
 
         self.size_slider = SettingSlider(
             self.window,
-            y=70,
+            y=98,
             title="\u865a\u62df\u5ba0\u7269\u5927\u5c0f",
             hint="\u8c03\u6574\u865a\u62df\u5ba0\u7269\u5927\u5c0f",
             value=pet.size_percent,
@@ -1065,9 +1305,9 @@ class SettingsWindow:
         )
         self.opacity_slider = SettingSlider(
             self.window,
-            y=154,
+            y=182,
             title="\u5ba0\u7269\u900f\u660e\u5ea6",
-            hint="\u8c03\u6574\u5ba0\u7269\u548c\u4efb\u52a1\u6c14\u6ce1\u7684\u900f\u660e\u5ea6",
+            hint="\u8c03\u6574\u5ba0\u7269\u548c\u6c14\u6ce1\u7684\u900f\u660e\u5ea6",
             value=pet.opacity_percent,
             minimum=MIN_OPACITY_PERCENT,
             maximum=MAX_OPACITY_PERCENT,
@@ -1076,6 +1316,63 @@ class SettingsWindow:
             on_reset=lambda: self.opacity_slider.set_value(
                 DEFAULT_OPACITY_PERCENT, notify=True
             ),
+            layout=self._content_layout,
+        )
+        self.throw_slider = SettingSlider(
+            self.window,
+            y=98,
+            title="\u7529\u51fa\u529b\u5ea6",
+            hint="\u8c03\u6574\u5feb\u901f\u62d6\u62fd\u540e\u7684\u98de\u884c\u529b\u5ea6",
+            value=pet.throw_power_percent,
+            minimum=MIN_THROW_POWER_PERCENT,
+            maximum=MAX_THROW_POWER_PERCENT,
+            default=DEFAULT_THROW_POWER_PERCENT,
+            command=pet.set_throw_power_percent,
+            on_reset=lambda: self.throw_slider.set_value(
+                DEFAULT_THROW_POWER_PERCENT,
+                notify=True,
+            ),
+            layout=self._content_layout,
+        )
+        self.reduced_motion_toggle = SettingToggle(
+            self.window,
+            y=190,
+            title="\u51cf\u5c11\u52a8\u6001\u6548\u679c",
+            hint="\u5173\u95ed\u81ea\u52a8\u5f85\u673a\u3001\u5de5\u4f5c\u8df3\u52a8\u548c\u843d\u5730\u6324\u538b",
+            value=pet.reduced_motion,
+            command=pet.set_reduced_motion,
+            layout=self._content_layout,
+        )
+        self.idle_interval_slider = SettingSlider(
+            self.window,
+            y=98,
+            title="\u7a7a\u95f2\u52a8\u4f5c\u95f4\u9694",
+            hint="100% = 30\u201375 \u79d2\uff0c\u8d8a\u5927\u8d8a\u5b89\u9759",
+            value=pet.idle_interval_percent,
+            minimum=MIN_IDLE_INTERVAL_PERCENT,
+            maximum=MAX_IDLE_INTERVAL_PERCENT,
+            default=DEFAULT_IDLE_INTERVAL_PERCENT,
+            command=pet.set_idle_interval_percent,
+            on_reset=lambda: self.idle_interval_slider.set_value(
+                DEFAULT_IDLE_INTERVAL_PERCENT,
+                notify=True,
+            ),
+            layout=self._content_layout,
+        )
+        self.lock_position_toggle = SettingToggle(
+            self.window,
+            y=190,
+            title="\u9501\u5b9a\u4f4d\u7f6e",
+            hint="\u6253\u5f00\u540e\u62d6\u62fd\u53ea\u4f1a\u89e6\u53d1\u52a8\u4f5c\uff0c\u4e0d\u4f1a\u79fb\u52a8\u5ba0\u7269",
+            value=pet.lock_position,
+            command=pet.set_lock_position,
+            layout=self._content_layout,
+        )
+        self.reset_position_button = SettingAction(
+            self.window,
+            y=246,
+            text="\u6062\u590d\u9ed8\u8ba4\u4f4d\u7f6e",
+            command=pet.reset_position,
             layout=self._content_layout,
         )
         self.grip = tk.Canvas(
@@ -1116,10 +1413,39 @@ class SettingsWindow:
     def _layout(self):
         self._render_background()
         self.close_button.place(x=self.width - 42, y=14)
-        self.size_slider.layout()
-        self.opacity_slider.layout()
+        self.general_tab.place(x=self.PAD, y=53)
+        self.interaction_tab.place(x=self.PAD + 52, y=53)
+        self.behavior_tab.place(x=self.PAD + 104, y=53)
+        general = self.page == "general"
+        interaction = self.page == "interaction"
+        behavior = self.page == "behavior"
+        self.general_tab.configure(
+            fg=TEXT if general else TEXT_MUTED,
+            font=("Microsoft YaHei UI", 9, "bold" if general else "normal"),
+        )
+        self.interaction_tab.configure(
+            fg=TEXT if interaction else TEXT_MUTED,
+            font=("Microsoft YaHei UI", 9, "bold" if interaction else "normal"),
+        )
+        self.behavior_tab.configure(
+            fg=TEXT if behavior else TEXT_MUTED,
+            font=("Microsoft YaHei UI", 9, "bold" if behavior else "normal"),
+        )
+        self.size_slider.set_visible(general)
+        self.opacity_slider.set_visible(general)
+        self.throw_slider.set_visible(interaction)
+        self.reduced_motion_toggle.set_visible(interaction)
+        self.idle_interval_slider.set_visible(behavior)
+        self.lock_position_toggle.set_visible(behavior)
+        self.reset_position_button.set_visible(behavior)
         self.grip.place(x=self.width - self.GRIP - 5, y=self.height - self.GRIP - 4)
         self._draw_grip()
+
+    def _set_page(self, page: str):
+        if page == self.page:
+            return
+        self.page = page
+        self._layout()
 
     def _draw_grip(self):
         self.grip.delete("all")
@@ -1153,11 +1479,7 @@ class SettingsWindow:
             return
         self.width = width
         self.height = height
-        self._render_background()
-        self.close_button.place(x=self.width - 42, y=14)
-        self.size_slider.layout()
-        self.opacity_slider.layout()
-        self.grip.place(x=self.width - self.GRIP - 5, y=self.height - self.GRIP - 4)
+        self._layout()
 
     def _resize_press(self, event):
         self.resize_origin = (event.x_root, event.y_root)
@@ -1224,9 +1546,15 @@ class PetWindow:
         self.gesture_after_job = None
         self.last_click_pose = None
         self.click_pose_bag = []
+        self.last_double_click_pose = None
         self.last_idle_pose = None
         self.idle_gesture_job = None
         self.single_click_job = None
+        self.last_completion_seq = None
+        self.completion_jumps_remaining = 0
+        self.completion_frame = 0
+        self.completion_between_jumps = False
+        self.completion_pending = False
         self.overlay_health_job = None
         self.physics_after_job = None
         self.physics_body = None
@@ -1236,6 +1564,7 @@ class PetWindow:
         self.landing_started = None
         self.landing_strength = 0.0
         self.frame = 0
+        self.flight_frame = 0
         self.drag_tracker = DragTracker(threshold=DRAG_THRESHOLD_PX)
         self.drag_work_areas = []
         self.drag_position = None
@@ -1245,11 +1574,17 @@ class PetWindow:
         self.dsh_pid_path = state_path.with_name("dsh.pid")
         self.hidden_path = state_path.with_name("hidden.flag")
         self.log_path = state_path.with_name("pet-window.log")
-        saved_settings = self._load_settings()
-        self.size_percent = saved_settings[0]
-        self.opacity_percent = saved_settings[1]
+        (
+            self.size_percent,
+            self.opacity_percent,
+            self.throw_power_percent,
+            self.reduced_motion,
+            self.lock_position,
+            self.idle_interval_percent,
+        ) = self._load_settings()
         self.menu = None
         self.settings_window = None
+        self.grab_active = False
 
         self.sheet = Image.open(sprite_path).convert("RGBA")
         pose_root = sprite_path.parent / "poses"
@@ -1274,9 +1609,11 @@ class PetWindow:
                 bbox = self._pose_cell(frame).getchannel("A").getbbox()
                 if bbox:
                     self.pose_top = min(self.pose_top, bbox[1])
+        self.row_bounds = {}
+        self.gesture_bounds = {}
         self.pose_bounds = self._measure_pose_bounds()
         self.root = tk.Tk()
-        self.root.title("Mint Budgie")
+        self.root.title("GujiGuji Pet")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-transparentcolor", TRANSPARENT_KEY)
@@ -1316,21 +1653,65 @@ class PetWindow:
         self.root.after(60, self._tick_animation)
         self.root.after(600, self._maintain_overlay)
 
-    def _load_settings(self) -> tuple[int, int]:
+    def _load_settings(self) -> tuple[int, int, int, bool, bool, int]:
         if not self.settings_path or not self.settings_path.exists():
-            return DEFAULT_SIZE_PERCENT, DEFAULT_OPACITY_PERCENT
+            return (
+                DEFAULT_SIZE_PERCENT,
+                DEFAULT_OPACITY_PERCENT,
+                DEFAULT_THROW_POWER_PERCENT,
+                False,
+                False,
+                DEFAULT_IDLE_INTERVAL_PERCENT,
+            )
         try:
             data = json.loads(self.settings_path.read_text("utf-8"))
             size = round(float(data.get("sizePercent", DEFAULT_SIZE_PERCENT)))
             opacity = round(
                 float(data.get("opacityPercent", DEFAULT_OPACITY_PERCENT))
             )
+            throw_power = round(
+                float(
+                    data.get(
+                        "throwPowerPercent",
+                        DEFAULT_THROW_POWER_PERCENT,
+                    )
+                )
+            )
+            reduced_motion = parse_bool(data.get("reducedMotion"), False)
+            lock_position = parse_bool(data.get("lockPosition"), False)
+            idle_interval = round(
+                float(
+                    data.get(
+                        "idleIntervalPercent",
+                        DEFAULT_IDLE_INTERVAL_PERCENT,
+                    )
+                )
+            )
             return (
                 clamp(size, MIN_SIZE_PERCENT, MAX_SIZE_PERCENT),
                 clamp(opacity, MIN_OPACITY_PERCENT, MAX_OPACITY_PERCENT),
+                clamp(
+                    throw_power,
+                    MIN_THROW_POWER_PERCENT,
+                    MAX_THROW_POWER_PERCENT,
+                ),
+                reduced_motion,
+                lock_position,
+                clamp(
+                    idle_interval,
+                    MIN_IDLE_INTERVAL_PERCENT,
+                    MAX_IDLE_INTERVAL_PERCENT,
+                ),
             )
         except (OSError, ValueError, TypeError):
-            return DEFAULT_SIZE_PERCENT, DEFAULT_OPACITY_PERCENT
+            return (
+                DEFAULT_SIZE_PERCENT,
+                DEFAULT_OPACITY_PERCENT,
+                DEFAULT_THROW_POWER_PERCENT,
+                False,
+                False,
+                DEFAULT_IDLE_INTERVAL_PERCENT,
+            )
 
     def _save_settings(self):
         if not self.settings_path:
@@ -1344,6 +1725,10 @@ class PetWindow:
                     data = {}
             data["sizePercent"] = self.size_percent
             data["opacityPercent"] = self.opacity_percent
+            data["throwPowerPercent"] = self.throw_power_percent
+            data["reducedMotion"] = self.reduced_motion
+            data["lockPosition"] = self.lock_position
+            data["idleIntervalPercent"] = self.idle_interval_percent
             self.settings_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.settings_path.with_suffix(".tmp")
             temp.write_text(json.dumps(data), "utf-8")
@@ -1536,7 +1921,7 @@ class PetWindow:
         scale_y = display_h / POSE_CELL_H
         origin_x = (width - display_w) // 2
         origin_y = self._sprite_top()
-        left, top, right, bottom = self.pose_bounds
+        left, top, right, bottom = self._active_body_bounds()
         # _pose_cell lifts frames that overshoot the shared foot line, so this
         # visible bottom is also the exact floor contact used by physics.
         return BodyGeometry(
@@ -1545,6 +1930,46 @@ class PetWindow:
             origin_x + right * scale_x,
             origin_y + bottom * scale_y,
         )
+
+    def _active_body_bounds(self):
+        if self.physics_body is not None:
+            return self.row_bounds.get(FLIGHT_ROW, self.pose_bounds)
+        if self._completion_active():
+            return self.row_bounds.get(FLIGHT_ROW, self.pose_bounds)
+        if self.pose in GESTURE_POSES and self.pose in self.poses:
+            return self.gesture_bounds.get(self.pose, self.pose_bounds)
+        if self.status == "idle" and self.pose == "idle":
+            return self.row_bounds.get("idle", self.pose_bounds)
+        animation_row = self._current_animation_row()
+        return self.row_bounds.get(animation_row, self.pose_bounds)
+
+    def _current_animation_row(self):
+        if self._completion_active():
+            return FLIGHT_ROW
+        if self.row == "running" and not self.reduced_motion:
+            return "jumping"
+        return self.row
+
+    def _clamp_current_window_to_monitor(self):
+        areas = self._work_area_rects()
+        if not areas:
+            return
+        geometry = self._body_geometry()
+        left, top = self.root.winfo_x(), self.root.winfo_y()
+        self.monitor_index = monitor_index_for_rect(
+            geometry.bounds_at(left, top),
+            areas,
+            self.monitor_index,
+        )
+        clamped = clamp_window_to_monitor(
+            left,
+            top,
+            geometry,
+            areas[self.monitor_index],
+        )
+        left, top = round(clamped[0]), round(clamped[1])
+        if left != self.root.winfo_x() or top != self.root.winfo_y():
+            self.root.geometry(f"+{left}+{top}")
 
     def _bubble_anchor_top(self) -> int:
         """Keep the task bubble just above the tallest possible pose."""
@@ -1605,7 +2030,8 @@ class PetWindow:
     def _measure_pose_bounds(self):
         """Measure every rendered pose so no transparent edge is treated as body."""
         boxes = []
-        for row_index, (_, frame_count) in enumerate(ROWS):
+        for row_index, (row_name, frame_count) in enumerate(ROWS):
+            row_boxes = []
             for frame_index in range(frame_count):
                 left = frame_index * CELL_W
                 top = row_index * CELL_H
@@ -1615,11 +2041,28 @@ class PetWindow:
                 bbox = self._pose_cell(cell).getchannel("A").getbbox()
                 if bbox:
                     boxes.append(bbox)
+                    row_boxes.append(bbox)
+            if row_boxes:
+                self.row_bounds[row_name] = (
+                    min(box[0] for box in row_boxes),
+                    min(box[1] for box in row_boxes),
+                    max(box[2] for box in row_boxes),
+                    max(box[3] for box in row_boxes),
+                )
         for pose_name in GESTURE_POSES:
+            pose_boxes = []
             for frame in self.poses.get(pose_name, ()):
                 bbox = self._pose_cell(frame).getchannel("A").getbbox()
                 if bbox:
                     boxes.append(bbox)
+                    pose_boxes.append(bbox)
+            if pose_boxes:
+                self.gesture_bounds[pose_name] = (
+                    min(box[0] for box in pose_boxes),
+                    min(box[1] for box in pose_boxes),
+                    max(box[2] for box in pose_boxes),
+                    max(box[3] for box in pose_boxes),
+                )
         if not boxes:
             return (POSE_PADDING, POSE_PADDING, POSE_CELL_W, POSE_BASELINE)
         return (
@@ -1629,16 +2072,14 @@ class PetWindow:
             max(box[3] for box in boxes),
         )
 
-    def _scaled_running_jump(self, cell: Image.Image) -> Image.Image:
-        """Keep the work bob, but reduce its vertical travel to 40%."""
-        if self.row != "running":
-            return cell
+    @staticmethod
+    def _scaled_jump(cell: Image.Image, travel_scale: float) -> Image.Image:
         bbox = cell.getchannel("A").getbbox()
         if not bbox:
             return cell
         _, _, _, bottom = bbox
         target_bottom = round(
-            POSE_BASELINE - (POSE_BASELINE - bottom) * RUNNING_JUMP_SCALE
+            POSE_BASELINE - (POSE_BASELINE - bottom) * travel_scale
         )
         shift = target_bottom - bottom
         if shift <= 0:
@@ -1646,6 +2087,17 @@ class PetWindow:
         reduced = Image.new("RGBA", cell.size, (0, 0, 0, 0))
         reduced.alpha_composite(cell, (0, shift))
         return reduced
+
+    def _scaled_running_jump(self, cell: Image.Image) -> Image.Image:
+        """Keep the work bob, but reduce its vertical travel."""
+        if self.reduced_motion or self.row != "running":
+            return cell
+        return self._scaled_jump(cell, RUNNING_JUMP_SCALE)
+
+    def _scaled_completion_jump(self, cell: Image.Image) -> Image.Image:
+        if self.reduced_motion:
+            return cell
+        return self._scaled_jump(cell, COMPLETION_JUMP_SCALE)
 
     def set_size_percent(self, percent: int):
         percent = clamp(round(percent), MIN_SIZE_PERCENT, MAX_SIZE_PERCENT)
@@ -1708,7 +2160,89 @@ class PetWindow:
                 pass
         self._save_settings()
 
+    def set_throw_power_percent(self, percent: int):
+        percent = clamp(
+            round(percent),
+            MIN_THROW_POWER_PERCENT,
+            MAX_THROW_POWER_PERCENT,
+        )
+        if percent == self.throw_power_percent:
+            return
+        self.throw_power_percent = percent
+        self._save_settings()
+
+    def set_idle_interval_percent(self, percent: int):
+        percent = clamp(
+            round(percent),
+            MIN_IDLE_INTERVAL_PERCENT,
+            MAX_IDLE_INTERVAL_PERCENT,
+        )
+        if percent == self.idle_interval_percent:
+            return
+        self.idle_interval_percent = percent
+        if self.status == "idle" and self.pose not in GESTURE_POSES:
+            self._schedule_idle_gesture()
+        self._save_settings()
+
+    def set_lock_position(self, locked: bool):
+        locked = bool(locked)
+        if locked == self.lock_position:
+            return
+        self.lock_position = locked
+        if locked:
+            self._cancel_physics(save_position=True)
+        self._save_settings()
+
+    def reset_position(self):
+        self._cancel_physics(save_position=False)
+        width, height = self._window_size()
+        left, top = self._default_position(width, height)
+        areas = self._work_area_rects()
+        geometry = self._body_geometry()
+        self.monitor_index = monitor_index_for_rect(
+            geometry.bounds_at(left, top),
+            areas,
+            self.monitor_index,
+        )
+        left, top = clamp_window_to_monitor(
+            left,
+            top,
+            geometry,
+            areas[self.monitor_index],
+        )
+        left, top = round(left), round(top)
+        self.root.geometry(f"{width}x{height}+{left}+{top}")
+        self._save_position(left, top)
+        self.root.after_idle(self.bubble.place)
+
+    def set_reduced_motion(self, reduced: bool):
+        reduced = bool(reduced)
+        if reduced == self.reduced_motion:
+            return
+        self.reduced_motion = reduced
+        if reduced:
+            self._cancel_idle_gesture()
+            self._cancel_completion_jumps(redraw=False)
+            self.grab_active = False
+            self._cancel_landing(redraw=False)
+        elif self.status == "idle" and self.pose not in GESTURE_POSES:
+            self._schedule_idle_gesture()
+        self._render_frame()
+        self._save_settings()
+
+    def _set_grab_feedback(self, active: bool):
+        active = bool(
+            active
+            and not self.reduced_motion
+            and not self.lock_position
+        )
+        if active == self.grab_active:
+            return
+        self.grab_active = active
+        self._render_frame()
+
     def _on_press(self, event):
+        self._cancel_completion_jumps()
         self._log(
             f"pet press x={event.x_root} y={event.y_root} "
             f"status={self.status} pose={self.pose} frame={self.frame}"
@@ -1716,6 +2250,7 @@ class PetWindow:
         if self.menu is not None:
             self.menu.close()
         self._cancel_physics(save_position=True)
+        self._set_grab_feedback(True)
         self.drag_work_areas = self._work_area_rects()
         self.monitor_index = monitor_index_for_rect(
             self._body_geometry().bounds_at(
@@ -1736,6 +2271,8 @@ class PetWindow:
         self.dragged = False
 
     def _move_drag_to(self, pointer_x: float, pointer_y: float) -> bool:
+        if self.lock_position:
+            return False
         dragged = self.drag_tracker.move(
             pointer_x,
             pointer_y,
@@ -1769,17 +2306,25 @@ class PetWindow:
         self._move_drag_to(event.x_root, event.y_root)
 
     def _on_release(self, event):
-        self._move_drag_to(event.x_root, event.y_root)
-        release = self.drag_tracker.release(
-            event.x_root,
-            event.y_root,
-            time.perf_counter(),
-            DRAG_THROW_POWER,
-        )
+        self._set_grab_feedback(False)
+        if self.lock_position:
+            self.drag_tracker.reset()
+            release_dragged = False
+            release_velocity = None
+        else:
+            self._move_drag_to(event.x_root, event.y_root)
+            release = self.drag_tracker.release(
+                event.x_root,
+                event.y_root,
+                time.perf_counter(),
+                self.throw_power_percent / 100,
+            )
+            release_dragged = release.dragged
+            release_velocity = release.velocity
         self.drag_work_areas = []
         self._log(
-            f"pet release dragged={release.dragged} "
-            f"velocity={0 if release.velocity is None else round(release.velocity.speed)} "
+            f"pet release dragged={release_dragged} "
+            f"velocity={0 if release_velocity is None else round(release_velocity.speed)} "
             f"status={self.status} pose={self.pose} frame={self.frame}"
         )
         drag_position = self.drag_position or (
@@ -1787,14 +2332,14 @@ class PetWindow:
             self.root.winfo_y(),
         )
         self.drag_position = None
-        if not release.dragged:
+        if not release_dragged:
             if self.dragged:
                 return
             self._schedule_single_click()
             return
 
         self.dragged = True
-        velocity = release.velocity
+        velocity = release_velocity
         self._start_physics(
             drag_position[0],
             drag_position[1],
@@ -1803,6 +2348,7 @@ class PetWindow:
         )
 
     def _start_physics(self, left: float, top: float, vx: float, vy: float):
+        self._cancel_completion_jumps(redraw=False)
         self._cancel_physics(save_position=False)
         self.physics_work_areas = self._work_area_rects()
         self.monitor_index = monitor_index_for_rect(
@@ -1817,12 +2363,14 @@ class PetWindow:
             float(vy),
             self.monitor_index,
         )
+        self.flight_frame = 0
         self.physics_last_tick = time.perf_counter()
         self.bubble.set_motion_hidden(True)
         self._log(
             f"physics start x={left} y={top} "
             f"vx={round(vx)} vy={round(vy)} monitor={self.monitor_index}"
         )
+        self._render_frame()
         self.physics_after_job = self.root.after(
             PHYSICS_FRAME_MS,
             self._tick_physics,
@@ -1901,6 +2449,7 @@ class PetWindow:
     def _finish_physics(self):
         body = self.physics_body
         self.physics_body = None
+        self.flight_frame = 0
         self.physics_last_tick = None
         self.physics_work_areas = []
         if body is not None:
@@ -1910,11 +2459,20 @@ class PetWindow:
             self._save_position(round(body.x), round(body.y))
         else:
             self._save_position()
+        self._render_frame()
         self.bubble.set_motion_hidden(False)
         self._log("physics rest")
+        if self.completion_pending:
+            self._start_completion_jumps()
 
     def _cancel_physics(self, save_position: bool):
-        self._cancel_landing(redraw=True)
+        active = (
+            self.physics_body is not None
+            or self.physics_after_job is not None
+            or self.landing_started is not None
+            or self.grab_active
+        )
+        self._cancel_landing(redraw=False)
         if self.physics_after_job is not None:
             try:
                 self.root.after_cancel(self.physics_after_job)
@@ -1923,12 +2481,16 @@ class PetWindow:
             self.physics_after_job = None
         body = self.physics_body
         self.physics_body = None
+        self.flight_frame = 0
+        self.grab_active = False
         self.physics_last_tick = None
         self.physics_work_areas = []
         if body is not None and save_position:
             left, top = round(body.x), round(body.y)
             self.root.geometry(f"+{left}+{top}")
             self._save_position(left, top)
+        if active:
+            self._render_frame()
         self.bubble.set_motion_hidden(False)
 
     def _save_position(self, left=None, top=None):
@@ -1957,18 +2519,33 @@ class PetWindow:
 
     def _schedule_idle_gesture(self):
         self._cancel_idle_gesture()
-        if self.status != "idle" or self.pose in GESTURE_POSES:
+        if (
+            self.reduced_motion
+            or self.status != "idle"
+            or self.pose in GESTURE_POSES
+            or self._completion_active()
+        ):
             return
-        delay = random.randint(
-            IDLE_GESTURE_MIN_DELAY_MS,
-            IDLE_GESTURE_MAX_DELAY_MS,
-        )
+        minimum, maximum = self._idle_delay_bounds()
+        delay = random.randint(minimum, maximum)
         self._log(f"idle gesture scheduled delay={delay}ms")
         self.idle_gesture_job = self.root.after(delay, self._run_idle_gesture)
 
+    def _idle_delay_bounds(self) -> tuple[int, int]:
+        scale = self.idle_interval_percent / 100
+        return (
+            max(1_000, round(IDLE_GESTURE_MIN_DELAY_MS * scale)),
+            max(1_000, round(IDLE_GESTURE_MAX_DELAY_MS * scale)),
+        )
+
     def _run_idle_gesture(self):
         self.idle_gesture_job = None
-        if self.status != "idle" or self.pose in GESTURE_POSES:
+        if (
+            self.reduced_motion
+            or self.status != "idle"
+            or self.pose in GESTURE_POSES
+            or self._completion_active()
+        ):
             return
         pose = self._next_idle_gesture()
         self._log(f"idle gesture pose={pose}")
@@ -2007,6 +2584,20 @@ class PetWindow:
         self.last_click_pose = pose
         return pose
 
+    def _next_double_click_gesture(self):
+        available = [
+            pose
+            for pose in DOUBLE_CLICK_POSES
+            if pose in self.poses and pose != self.last_double_click_pose
+        ]
+        if not available:
+            available = [
+                pose for pose in DOUBLE_CLICK_POSES if pose in self.poses
+            ]
+        pose = random.choice(available) if available else DOUBLE_CLICK_POSES[0]
+        self.last_double_click_pose = pose
+        return pose
+
     def _cancel_single_click(self):
         if self.single_click_job is None:
             return
@@ -2020,12 +2611,14 @@ class PetWindow:
         if pose not in GESTURE_POSES or pose not in self.poses:
             self._log(f"gesture skipped pose={pose}: pose unavailable")
             return
+        self._cancel_completion_jumps(redraw=False)
         self._cancel_idle_gesture()
         self._cancel_gesture_timer()
         self.pose = pose
         self.gesture_token += 1
         token = self.gesture_token
         self.frame = 0
+        self._clamp_current_window_to_monitor()
         self._log(
             f"gesture start pose={self.pose} frame={self.frame} "
             f"frames={len(self.poses[self.pose])} token={token}"
@@ -2066,7 +2659,8 @@ class PetWindow:
         self.pose = "idle"
         self.frame = 0
         self._render_frame()
-        self._schedule_idle_gesture()
+        if not self.reduced_motion and self.status == "idle":
+            self._schedule_idle_gesture()
 
     def _cancel_gesture_timer(self):
         if self.gesture_after_job is None:
@@ -2076,6 +2670,80 @@ class PetWindow:
         except tk.TclError:
             pass
         self.gesture_after_job = None
+
+    def _completion_active(self) -> bool:
+        return int(getattr(self, "completion_jumps_remaining", 0)) > 0
+
+    def _start_completion_jumps(self):
+        if self.reduced_motion:
+            self._log("completion jumps skipped: reduced motion")
+            return
+        if getattr(self, "physics_body", None) is not None:
+            self.completion_pending = True
+            self._log("completion jumps queued until landing")
+            return
+        self.completion_pending = False
+        self._cancel_idle_gesture()
+        self._cancel_single_click()
+        self._cancel_gesture_timer()
+        self.gesture_token += 1
+        self.pose = "idle"
+        self.frame = 0
+        self.completion_jumps_remaining = COMPLETION_JUMP_COUNT
+        self.completion_frame = 0
+        self.completion_between_jumps = False
+        self._log(f"completion jumps start count={COMPLETION_JUMP_COUNT}")
+        self._render_frame()
+
+    def _advance_completion_jump(self) -> int:
+        if not self._completion_active():
+            return 1000
+        if self.completion_between_jumps:
+            self.completion_between_jumps = False
+            self.completion_frame = 0
+            self._render_frame()
+            return FRAME_MS[FLIGHT_ROW]
+
+        frame_count = ROW_FRAMES[ROW_INDEX[FLIGHT_ROW]]
+        self.completion_frame += 1
+        if self.completion_frame < frame_count:
+            self._render_frame()
+            return FRAME_MS[FLIGHT_ROW]
+
+        self.completion_jumps_remaining -= 1
+        self.completion_frame = 0
+        if self.completion_jumps_remaining > 0:
+            self.completion_between_jumps = True
+            self._render_frame()
+            return COMPLETION_JUMP_GAP_MS
+
+        self._finish_completion_jumps()
+        return 1000 if self.status == "idle" else 160
+
+    def _finish_completion_jumps(self):
+        self.completion_jumps_remaining = 0
+        self.completion_frame = 0
+        self.completion_between_jumps = False
+        self.completion_pending = False
+        self.pose = "idle"
+        self.frame = 0
+        self._log("completion jumps finish")
+        self._render_frame()
+        if not self.reduced_motion and self.status == "idle":
+            self._schedule_idle_gesture()
+
+    def _cancel_completion_jumps(self, redraw: bool = True):
+        was_active = self._completion_active()
+        self.completion_pending = False
+        self.completion_jumps_remaining = 0
+        self.completion_frame = 0
+        self.completion_between_jumps = False
+        if (
+            was_active
+            and redraw
+            and getattr(self, "physics_body", None) is None
+        ):
+            self._render_frame()
 
     def _on_configure(self, event):
         if event.widget is self.root and self.bubble.visible:
@@ -2091,10 +2759,23 @@ class PetWindow:
             f" restore_bubble={restore_bubble}"
         )
         self.dragged = True
+        pose = self._next_double_click_gesture()
+        self._log(f"double-click gesture pose={pose}")
+        self._start_gesture(pose)
+        # Paint the first gesture frame before doing Win32 window work. Opening
+        # or focusing DSH can temporarily block Tk's event loop, which made the
+        # feedback appear only after the window had already opened.
+        self.root.update_idletasks()
+        self.root.after(
+            0,
+            lambda: self._finish_double_click_toggle(restore_bubble),
+        )
+        return "break"
+
+    def _finish_double_click_toggle(self, restore_bubble: bool):
         self._toggle_dsh_window()
         if restore_bubble:
             self.bubble.restore()
-        return "break"
 
     def _bubble_should_restore(self) -> bool:
         """Restore a collapsed task bubble only while the task is active."""
@@ -2103,6 +2784,7 @@ class PetWindow:
         return self.status in ("running", "waiting", "failed", "review")
 
     def _on_right_click(self, event):
+        self._cancel_completion_jumps()
         self._cancel_physics(save_position=True)
         if self.menu is not None:
             self.menu.close()
@@ -2364,12 +3046,40 @@ class PetWindow:
         self.root.destroy()
 
     def _read_state(self) -> dict:
-        if not self.state_path.exists():
-            return {}
+        candidates = [self.state_path]
+        app_data = os.environ.get("APPDATA")
+        if app_data:
+            candidates.extend(
+                Path(app_data) / name / "state.json"
+                for name in ("dsh-light-feather", "dsh-mint-budgie")
+            )
+
+        newest = None
+        newest_mtime = float("-inf")
+        seen = set()
+        for path in candidates:
+            if path in seen:
+                continue
+            seen.add(path)
+            try:
+                mtime = path.stat().st_mtime
+                state = json.loads(path.read_text("utf-8"))
+            except (OSError, ValueError):
+                continue
+            if mtime > newest_mtime and isinstance(state, dict):
+                newest = state
+                newest_mtime = mtime
+        return newest or {}
+
+    @staticmethod
+    def _completion_sequence(state: dict) -> int:
+        value = state.get("completionSeq") if isinstance(state, dict) else 0
+        if isinstance(value, bool):
+            return 0
         try:
-            return json.loads(self.state_path.read_text("utf-8"))
-        except (OSError, ValueError):
-            return {}
+            return max(0, int(value))
+        except (TypeError, ValueError, OverflowError):
+            return 0
 
     def _tick_state(self):
         state = self._read_state()
@@ -2377,8 +3087,10 @@ class PetWindow:
         task = state.get("task") if isinstance(state.get("task"), str) else ""
         activity = state.get("activity") if isinstance(state.get("activity"), str) else ""
         working = state.get("working") is True
-        if (status, task, activity, working) != self.last_state:
-            self.last_state = (status, task, activity, working)
+        completion_seq = self._completion_sequence(state)
+        state_key = (status, task, activity, working, completion_seq)
+        if state_key != self.last_state:
+            self.last_state = state_key
             self.task = task.strip()
             if isinstance(status, str):
                 self.status = status
@@ -2397,6 +3109,14 @@ class PetWindow:
                 self.row = "running"
                 self.frame = 0
             self.bubble.update(visible_status, self.task, activity)
+            if self.last_completion_seq is None:
+                self.last_completion_seq = completion_seq
+            elif completion_seq > self.last_completion_seq:
+                self.last_completion_seq = completion_seq
+                self._start_completion_jumps()
+            elif completion_seq < self.last_completion_seq:
+                # A restarted Host resets its process-local sequence.
+                self.last_completion_seq = completion_seq
             self._render_frame()
             if self.status == "idle":
                 if self.idle_gesture_job is None:
@@ -2425,7 +3145,15 @@ class PetWindow:
         )
 
     def _tick_animation(self):
-        if self.pose in GESTURE_POSES and self.pose in self.poses:
+        if self.physics_body is not None:
+            self.flight_frame = (
+                self.flight_frame + 1
+            ) % ROW_FRAMES[ROW_INDEX[FLIGHT_ROW]]
+            delay = FRAME_MS[FLIGHT_ROW]
+            self._render_frame()
+        elif self._completion_active():
+            delay = self._advance_completion_jump()
+        elif self.pose in GESTURE_POSES and self.pose in self.poses:
             # The gesture timer owns the frame while a click animation plays.
             # Do not advance or redraw the work row, or the standing frame would
             # briefly be replaced by an unrelated animation frame at the end.
@@ -2433,7 +3161,7 @@ class PetWindow:
         elif self.status != "idle":
             # The supplied running row is nearly indistinguishable from
             # standing. Use the more legible jump cycle while work is active.
-            animation_row = "jumping" if self.row == "running" else self.row
+            animation_row = self._current_animation_row()
             row_index = ROW_INDEX.get(animation_row, 0)
             frames = ROW_FRAMES[row_index]
             self.frame = (self.frame + 1) % frames
@@ -2448,6 +3176,35 @@ class PetWindow:
         self.root.after(delay, self._tick_animation)
 
     def _current_pose_cell(self, display_w: int, display_h: int):
+        if self.physics_body is not None:
+            row_index = ROW_INDEX[FLIGHT_ROW]
+            left = self.flight_frame * CELL_W
+            top = row_index * CELL_H
+            cell = self.sheet.crop(
+                (left, top, left + CELL_W, top + CELL_H)
+            )
+            cell = self._pose_cell(cell)
+            return cell.resize(
+                (display_w, display_h),
+                Image.Resampling.NEAREST,
+            )
+        if self._completion_active():
+            if self.completion_between_jumps:
+                cell = self.sheet.crop((0, 0, CELL_W, CELL_H))
+                cell = self._pose_cell(cell)
+            else:
+                row_index = ROW_INDEX[FLIGHT_ROW]
+                left = self.completion_frame * CELL_W
+                top = row_index * CELL_H
+                cell = self.sheet.crop(
+                    (left, top, left + CELL_W, top + CELL_H)
+                )
+                cell = self._pose_cell(cell)
+                cell = self._scaled_completion_jump(cell)
+            return cell.resize(
+                (display_w, display_h),
+                Image.Resampling.NEAREST,
+            )
         if self.pose in GESTURE_POSES and self.pose in self.poses:
             frames = self.poses[self.pose]
             cell = self._pose_cell(frames[self.frame % len(frames)])
@@ -2464,7 +3221,7 @@ class PetWindow:
                 (display_w, display_h),
                 Image.Resampling.NEAREST,
             )
-        animation_row = "jumping" if self.row == "running" else self.row
+        animation_row = self._current_animation_row()
         row_index = ROW_INDEX.get(animation_row, 0)
         left = self.frame * CELL_W
         top = row_index * CELL_H
@@ -2477,13 +3234,20 @@ class PetWindow:
         )
 
     def _current_landing_scale(self) -> tuple[float, float]:
-        if self.landing_started is None:
+        if self.reduced_motion or self.landing_started is None:
             return (1.0, 1.0)
         elapsed = time.perf_counter() - self.landing_started
         progress = elapsed * 1000 / LANDING_DURATION_MS
         if progress >= 1.0:
             return (1.0, 1.0)
         return landing_scale(progress, self.landing_strength)
+
+    def _current_pose_scale(self) -> tuple[float, float]:
+        scale_x, scale_y = self._current_landing_scale()
+        if self.grab_active and not self.reduced_motion:
+            scale_x *= GRAB_SCALE_X
+            scale_y *= GRAB_SCALE_Y
+        return (scale_x, scale_y)
 
     @staticmethod
     def _squash_pose_cell(cell, scale_x: float, scale_y: float):
@@ -2511,7 +3275,7 @@ class PetWindow:
         display_w = self._display_width()
         display_h = self._display_height()
         cell = self._current_pose_cell(display_w, display_h)
-        scale_x, scale_y = self._current_landing_scale()
+        scale_x, scale_y = self._current_pose_scale()
         cell = self._squash_pose_cell(cell, scale_x, scale_y)
         composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         composed.alpha_composite(

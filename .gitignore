@@ -26,6 +26,12 @@ desktop/__pycache__/
 desktop/build/
 desktop/dist/
 desktop/check-*.json
+desktop/settings.json
+desktop/settings.json.before-*
+desktop/light-feather-*.exe
+desktop/light-feather.exe
+desktop/mint-budgie-*.exe
+desktop/mint-budgie.exe
 scripts/__pycache__/
 assets/poses/contact-sheet-*.png
 assets/poses/*-preview.png

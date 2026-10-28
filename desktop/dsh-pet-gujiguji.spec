@@ -7,7 +7,7 @@ import json
 project = Path(SPECPATH).resolve().parent
 desktop = project / "desktop"
 package = json.loads((project / "package.json").read_text(encoding="utf-8"))
-exe_name = f"mint-budgie-{package['version']}"
+exe_name = f"dsh-pet-gujiguji-{package['version']}"
 
 a = Analysis(
     [str(desktop / "pet-window.pyw")],

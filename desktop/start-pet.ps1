@@ -1,15 +1,42 @@
 $ErrorActionPreference = "SilentlyContinue"
 
 $plugin = Split-Path -Parent $PSScriptRoot
-$state = Join-Path $PSScriptRoot "state.json"
-$position = Join-Path $PSScriptRoot "position.json"
-$settings = Join-Path $PSScriptRoot "settings.json"
+$userData = Join-Path $env:APPDATA "dsh-pet-gujiguji"
+New-Item -ItemType Directory -Path $userData -Force | Out-Null
+$state = Join-Path $userData "state.json"
+$position = Join-Path $userData "position.json"
+$settings = Join-Path $userData "settings.json"
 $sprite = Join-Path $plugin "assets\spritesheet.png"
 $script = Join-Path $PSScriptRoot "pet-window.pyw"
+$defaultSettings = Join-Path $PSScriptRoot "default-settings.json"
+
+if (-not (Test-Path -LiteralPath $settings) -and (Test-Path -LiteralPath $defaultSettings)) {
+  $legacySettings = @(
+    (Join-Path $env:APPDATA "dsh-light-feather\settings.json"),
+    (Join-Path $env:APPDATA "dsh-mint-budgie\settings.json")
+  ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+  Copy-Item -LiteralPath $(if ($legacySettings) { $legacySettings } else { $defaultSettings }) -Destination $settings
+}
+$localPosition = Join-Path $PSScriptRoot "position.json"
+if (-not (Test-Path -LiteralPath $position) -and (Test-Path -LiteralPath $localPosition)) {
+  Copy-Item -LiteralPath $localPosition -Destination $position
+}
+if (-not (Test-Path -LiteralPath $position)) {
+  $legacyPosition = @(
+    (Join-Path $env:APPDATA "dsh-light-feather\position.json"),
+    (Join-Path $env:APPDATA "dsh-mint-budgie\position.json")
+  ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+  if ($legacyPosition) {
+    Copy-Item -LiteralPath $legacyPosition -Destination $position
+  }
+}
 $bundledExe = $null
-$versionedExe = Get-ChildItem -LiteralPath $PSScriptRoot -Filter "mint-budgie-*.exe" -File -ErrorAction SilentlyContinue |
+$versionedExe = Get-ChildItem -LiteralPath $PSScriptRoot -Filter "*-*.exe" -File -ErrorAction SilentlyContinue |
   ForEach-Object {
-    $versionText = $_.BaseName.Substring("mint-budgie-".Length)
+    if ($_.BaseName -notmatch '^(dsh-pet-gujiguji|light-feather|mint-budgie)-(\d+\.\d+\.\d+)$') {
+      return
+    }
+    $versionText = $Matches[2]
     try {
       [pscustomobject]@{ Path = $_.FullName; Version = [version]$versionText }
     } catch {
@@ -20,14 +47,17 @@ $versionedExe = Get-ChildItem -LiteralPath $PSScriptRoot -Filter "mint-budgie-*.
 if ($versionedExe) {
   $bundledExe = $versionedExe.Path
 } else {
-  $legacyExe = Join-Path $PSScriptRoot "mint-budgie.exe"
-  if (Test-Path $legacyExe) {
-    $bundledExe = $legacyExe
+  foreach ($legacyName in @("dsh-pet-gujiguji.exe", "light-feather.exe", "mint-budgie.exe")) {
+    $legacyExe = Join-Path $PSScriptRoot $legacyName
+    if (Test-Path $legacyExe) {
+      $bundledExe = $legacyExe
+      break
+    }
   }
 }
 $pidFile = Join-Path $PSScriptRoot "pet.pid"
-$dshPidFile = Join-Path $PSScriptRoot "dsh.pid"
-$hiddenFlag = Join-Path $PSScriptRoot "hidden.flag"
+$dshPidFile = Join-Path $userData "dsh.pid"
+$hiddenFlag = Join-Path $userData "hidden.flag"
 
 if (-not (Test-Path $sprite) -or (-not (Test-Path $script) -and -not $bundledExe)) {
   exit 1
@@ -37,12 +67,24 @@ if (Test-Path $hiddenFlag) {
   Remove-Item -LiteralPath $hiddenFlag -Force -ErrorAction SilentlyContinue
 }
 
-if (Test-Path $pidFile) {
-  $oldPid = [int](Get-Content $pidFile -Raw).Trim()
-  if ($oldPid -gt 0) {
-    Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+$knownPetExes = @(
+  Get-ChildItem -LiteralPath $PSScriptRoot -Filter "*-*.exe" -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.BaseName -match '^(dsh-pet-gujiguji|light-feather|mint-budgie)-(\d+\.\d+\.\d+)$' } |
+    ForEach-Object { $_.FullName }
+  foreach ($legacyName in @("dsh-pet-gujiguji.exe", "light-feather.exe", "mint-budgie.exe")) {
+    $legacyPath = Join-Path $PSScriptRoot $legacyName
+    if (Test-Path -LiteralPath $legacyPath) { $legacyPath }
   }
+)
+$existingPets = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+  Where-Object {
+    ($knownPetExes -contains $_.ExecutablePath) -or
+    ($_.CommandLine -like "*$script*")
+  }
+foreach ($existingPet in $existingPets) {
+  Stop-Process -Id $existingPet.ProcessId -Force -ErrorAction SilentlyContinue
 }
+Start-Sleep -Milliseconds 300
 
 $dshPid = $null
 if (Test-Path $dshPidFile) {
@@ -88,6 +130,7 @@ if ($bundledExe) {
   $executable = $python
   $arguments = @($script) + $arguments
 }
+$startedAt = Get-Date
 $p = Start-Process -FilePath $executable -ArgumentList $arguments -PassThru -WindowStyle Hidden -WorkingDirectory $PSScriptRoot
 if (-not $p) { exit 3 }
 $deadline = (Get-Date).AddSeconds(5)
@@ -96,6 +139,7 @@ while ((Get-Date) -lt $deadline) {
   $running = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
     Where-Object {
       $_.ProcessId -ne $p.Id -and
+      $_.CreationDate -ge $startedAt.AddSeconds(-1) -and
       (
         $_.CommandLine -like "*$script*" -or
         $_.ExecutablePath -eq $bundledExe

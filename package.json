@@ -1,19 +1,19 @@
 {
-  "name": "dsh-mint-budgie",
-  "version": "0.6.0",
+  "name": "dsh-pet-gujiguji",
+  "version": "0.8.0",
   "type": "module",
-  "description": "Mint Budgie desktop pet for DeepSeek Harness: a sprite-sheet companion that reacts to the active agent status, mirroring the Codex desktop pet.",
+  "description": "GujiGuji desktop pet for DeepSeek Harness: a lightweight bird companion that reacts to the active agent status, mirroring the Codex desktop pet.",
   "license": "MIT",
   "author": "7AAAAAH",
-  "icon": "./icon.svg",
+  "icon": "./assets/icon-180.png",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/7AAAAAH/dsh-mint-budgie.git"
+    "url": "git+https://github.com/7AAAAAH/dsh-pet-gujiguji.git"
   },
   "bugs": {
-    "url": "https://github.com/7AAAAAH/dsh-mint-budgie/issues"
+    "url": "https://github.com/7AAAAAH/dsh-pet-gujiguji/issues"
   },
-  "homepage": "https://github.com/7AAAAAH/dsh-mint-budgie#readme",
+  "homepage": "https://github.com/7AAAAAH/dsh-pet-gujiguji#readme",
   "keywords": [
     "deepseek",
     "deepseek-harness",
@@ -21,7 +21,8 @@
     "dsh-plugin",
     "desktop-pet",
     "virtual-pet",
-    "mint-budgie",
+    "gujiguji",
+    "bird",
     "windows"
   ],
   "engines": {
@@ -35,7 +36,7 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./assets/icon-180.png"
   },
   "files": [
     "index.js",
@@ -43,6 +44,8 @@
     "cordis.patch.yml",
     "assets/spritesheet.webp",
     "assets/spritesheet.png",
+    "assets/icon-180.png",
+    "assets/screenshot-1.png",
     "assets/poses/idle_*.png",
     "assets/poses/head-tilt_*.png",
     "assets/poses/head-stretch_*.png",
@@ -51,15 +54,16 @@
     "assets/poses/sources/*.png",
     "assets/poses/idle.png",
     "assets/poses/poses.json",
-    "desktop/mint-budgie-*.exe",
+    "desktop/dsh-pet-gujiguji-*.exe",
     "desktop/pet-window.pyw",
     "desktop/pet_physics.py",
-    "desktop/mint-budgie.spec",
+    "desktop/dsh-pet-gujiguji.spec",
     "desktop/default-settings.json",
     "desktop/start-pet.ps1",
     "desktop/setup-startup.ps1",
     "locale/*.json",
     "icon.svg",
+    "screenshots.json",
     "LICENSE",
     "README.md",
     "README.zh.md",

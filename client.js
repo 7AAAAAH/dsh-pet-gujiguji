@@ -1,7 +1,7 @@
 /**
- * Client half of dsh-mint-budgie.
+ * Client half of dsh-pet-gujiguji.
  *
- * Renders the Mint Budgie sprite sheet in the window overlay and swaps the
+ * Renders the GujiGuji sprite sheet in the window overlay and swaps the
  * animation row from the Host's agent-status stream. The pet is a normal slot
  * entry, so it is disposed with the plugin instead of leaving a detached DOM
  * tree behind on document.body.
@@ -12,18 +12,18 @@
  */
 
 window.__ModuleLoader__.load({
-  id: 'dsh-mint-budgie',
+  id: 'dsh-pet-gujiguji',
   factory(require) {
     const React = require('react')
     const h = React.createElement
     const { useCallback, useEffect, useRef, useState } = React
 
-    const SPRITE_ROUTE = '/dsh-mint-budgie/spritesheet.webp'
-    const STATE_ROUTE = '/dsh-mint-budgie/state'
-    const SETTINGS_ROUTE = '/dsh-mint-budgie/settings'
-    const POSITION_KEY = 'dsh-mint-budgie:position'
+    const SPRITE_ROUTE = '/dsh-pet-gujiguji/spritesheet.webp'
+    const STATE_ROUTE = '/dsh-pet-gujiguji/state'
+    const SETTINGS_ROUTE = '/dsh-pet-gujiguji/settings'
+    const POSITION_KEY = 'dsh-pet-gujiguji:position'
     // Ignore the old `visible=false` value that could hide the pet forever.
-    const VISIBLE_KEY = 'dsh-mint-budgie:visible:v2'
+    const VISIBLE_KEY = 'dsh-pet-gujiguji:visible:v2'
 
     const CELL_W = 192
     const CELL_H = 208
@@ -243,11 +243,11 @@ window.__ModuleLoader__.load({
       }
 
       return h('div', {
-        'data-dsh-mint-budgie': '',
+        'data-dsh-pet-gujiguji': '',
         title: taskLabel(task)
-          ? `Mint Budgie · ${status} · ${taskLabel(task)}（拖拽移动，右键隐藏）`
-          : `Mint Budgie · ${status}（拖拽移动，右键隐藏）`,
-        'aria-label': `Mint Budgie desktop pet: ${status}${taskLabel(task) ? `, ${taskLabel(task)}` : ''}`,
+          ? `GujiGuji · ${status} · ${taskLabel(task)}（拖拽移动，右键隐藏）`
+          : `GujiGuji · ${status}（拖拽移动，右键隐藏）`,
+        'aria-label': `GujiGuji desktop pet: ${status}${taskLabel(task) ? `, ${taskLabel(task)}` : ''}`,
         role: 'img',
         onPointerDown,
         onPointerMove,

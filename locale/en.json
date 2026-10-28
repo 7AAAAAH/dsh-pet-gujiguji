@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "DSH Pet",
-    "description": "Shows a Mint Budgie desktop pet in the bottom-right corner that swaps its animation by the active agent status (running/waiting/failed/review), mirroring the Codex desktop pet."
+    "title": "GujiGuji Pet",
+    "description": "Shows a lightweight bird desktop pet that swaps its animation by the active agent status (running/waiting/failed/review), mirroring the Codex desktop pet."
   }
 }

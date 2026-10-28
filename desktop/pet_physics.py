@@ -99,13 +99,13 @@ class ThrowBody:
 
 @dataclass(frozen=True)
 class PhysicsParams:
-    gravity: float = 2200.0
-    restitution_x: float = 0.38
-    restitution_y: float = 0.34
-    ground_friction: float = 5.5
-    air_drag: float = 0.08
-    stop_bounce_speed: float = 40.0
-    rest_speed_x: float = 15.0
+    gravity: float = 1650.0
+    restitution_x: float = 0.34
+    restitution_y: float = 0.22
+    ground_friction: float = 7.2
+    air_drag: float = 0.22
+    stop_bounce_speed: float = 70.0
+    rest_speed_x: float = 18.0
     rest_speed_y: float = 1.0
     max_dt: float = 0.05
     seam_tolerance: float = 2.0
@@ -178,8 +178,8 @@ def estimate_release_velocity(
     samples: Sequence[DragSample],
     now: float,
     throw_power: float = 1.0,
-    min_throw_speed: float = 500.0,
-    soft_speed_limit: float = 3600.0,
+    min_throw_speed: float = 460.0,
+    soft_speed_limit: float = 3200.0,
     sample_window: float = 0.150,
 ) -> Velocity | None:
     """Estimate pointer velocity from the recent drag trail.
@@ -235,7 +235,7 @@ def estimate_release_velocity(
 def landing_strength(impact_speed: float) -> float:
     """Map a floor impact to a restrained squash amount."""
     normalized = _clamp_axis((abs(impact_speed) - 250.0) / 1250.0, 0.0, 1.0)
-    return 0.06 + normalized * 0.12
+    return 0.03 + normalized * 0.07
 
 
 def landing_scale(progress: float, strength: float) -> tuple[float, float]:

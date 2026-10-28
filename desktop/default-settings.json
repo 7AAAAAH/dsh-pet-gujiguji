@@ -1,6 +1,10 @@
 {
   "sizePercent": 65,
   "opacityPercent": 75,
+  "throwPowerPercent": 100,
+  "reducedMotion": false,
+  "lockPosition": false,
+  "idleIntervalPercent": 100,
   "settingsWidth": 420,
-  "settingsHeight": 270
+  "settingsHeight": 330
 }

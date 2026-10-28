@@ -44,7 +44,7 @@ class ReleaseVelocityTests(unittest.TestCase):
         self.assertGreater(velocity.vx, 0)
         self.assertGreater(velocity.vy, 0)
         self.assertGreaterEqual(velocity.speed, 500)
-        self.assertLess(velocity.speed, 3600)
+        self.assertLess(velocity.speed, 3200)
 
     def test_stale_trail_does_not_throw(self):
         velocity = estimate_release_velocity(
@@ -52,6 +52,17 @@ class ReleaseVelocityTests(unittest.TestCase):
             0.30,
         )
         self.assertIsNone(velocity)
+
+    def test_throw_power_scales_release_speed(self):
+        samples = [
+            DragSample(0.0, 0.0, 0.0),
+            DragSample(0.05, 150.0, 0.0),
+        ]
+        normal = estimate_release_velocity(samples, 0.05, throw_power=1.0)
+        strong = estimate_release_velocity(samples, 0.05, throw_power=1.5)
+        self.assertIsNotNone(normal)
+        self.assertIsNotNone(strong)
+        self.assertGreater(strong.speed, normal.speed)
 
 
 class DragTrackerTests(unittest.TestCase):
@@ -95,7 +106,7 @@ class MonitorTests(unittest.TestCase):
 class LandingAnimationTests(unittest.TestCase):
     def test_impact_strength_is_bounded(self):
         self.assertGreater(landing_strength(0), 0)
-        self.assertLessEqual(landing_strength(5000), 0.18)
+        self.assertLessEqual(landing_strength(5000), 0.10)
 
     def test_landing_starts_and_ends_at_full_size(self):
         self.assertEqual(landing_scale(0.0, 0.12), (1.0, 1.0))
