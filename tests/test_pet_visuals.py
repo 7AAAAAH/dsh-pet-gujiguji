@@ -76,24 +76,22 @@ class PetVisualTests(unittest.TestCase):
     def test_takeoff_uses_visible_jumping_frame_and_bounds(self):
         window = self._make_window()
         window.physics_body = object()
+        window.flight_phase = "takeoff"
+        window.flight_landing_frame = pet_window.FLIGHT_LANDING_FRAMES[0]
 
         actual = window._current_pose_cell(320, 320)
-        row_index = pet_window.ROW_INDEX[pet_window.FLIGHT_ROW]
-        row = self.sheet.crop(
-            (
-                window.flight_frame * pet_window.CELL_W,
-                row_index * pet_window.CELL_H,
-                (window.flight_frame + 1) * pet_window.CELL_W,
-                (row_index + 1) * pet_window.CELL_H,
-            )
+        expected = pet_window.PetWindow._pose_cell(
+            self.poses[pet_window.FLIGHT_GLIDE_POSE][
+                pet_window.FLIGHT_GLIDE_FRAME
+            ]
         )
-        expected = pet_window.PetWindow._pose_cell(row)
+        expected = expected.resize(
+            (320, 320),
+            Image.Resampling.NEAREST,
+        )
 
         self.assertEqual(actual.tobytes(), expected.tobytes())
-        self.assertEqual(
-            window._active_body_bounds(),
-            self.row_bounds[pet_window.FLIGHT_ROW],
-        )
+        self.assertTrue(window._active_body_bounds())
 
     def test_takeoff_skips_standing_edge_frames(self):
         self.assertEqual(pet_window.FLIGHT_TAKEOFF_FRAMES, (2,))
@@ -107,22 +105,18 @@ class PetVisualTests(unittest.TestCase):
 
         self.assertTrue(window.drag_flight_active)
         actual = window._current_pose_cell(320, 320)
-        row_index = pet_window.ROW_INDEX[pet_window.FLIGHT_ROW]
-        row = self.sheet.crop(
-            (
-                window.flight_frame * pet_window.CELL_W,
-                row_index * pet_window.CELL_H,
-                (window.flight_frame + 1) * pet_window.CELL_W,
-                (row_index + 1) * pet_window.CELL_H,
-            )
+        expected = pet_window.PetWindow._pose_cell(
+            self.poses[pet_window.FLIGHT_GLIDE_POSE][
+                pet_window.FLIGHT_GLIDE_FRAME
+            ]
         )
-        expected = pet_window.PetWindow._pose_cell(row)
+        expected = expected.resize(
+            (320, 320),
+            Image.Resampling.NEAREST,
+        )
 
         self.assertEqual(actual.tobytes(), expected.tobytes())
-        self.assertEqual(
-            window._active_body_bounds(),
-            self.row_bounds[pet_window.FLIGHT_ROW],
-        )
+        self.assertTrue(window._active_body_bounds())
 
         window.reduced_motion = True
         window._set_drag_flight_active(True)

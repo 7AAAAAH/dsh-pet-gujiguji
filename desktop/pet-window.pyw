@@ -87,6 +87,8 @@ COMPLETION_JUMP_GAP_MS = 220
 FLIGHT_ROW = "jumping"
 FLIGHT_TAKEOFF_FRAMES = (2,)
 FLIGHT_TAKEOFF_START_FRAME = FLIGHT_TAKEOFF_FRAMES[0]
+FLIGHT_GLIDE_POSE = "cheer"
+FLIGHT_GLIDE_FRAME = 3
 FLIGHT_LANDING_POSE = "cheer"
 FLIGHT_LANDING_FRAMES = (1, 2, 3, 4, 5)
 FLIGHT_LANDING_GAP_RATIO = 0.22
@@ -3324,9 +3326,17 @@ class PetWindow:
 
     def _current_pose_cell(self, display_w: int, display_h: int):
         if self.physics_body is not None:
-            if self.flight_phase == "landing" and FLIGHT_LANDING_POSE in self.poses:
-                frames = self.poses[FLIGHT_LANDING_POSE]
-                cell = frames[self.flight_landing_frame % len(frames)]
+            glide_frames = self.poses.get(FLIGHT_GLIDE_POSE)
+            if (
+                self.flight_phase in ("takeoff", "landing")
+                and glide_frames
+            ):
+                frame_index = (
+                    self.flight_landing_frame
+                    if self.flight_phase == "landing"
+                    else FLIGHT_GLIDE_FRAME
+                )
+                cell = glide_frames[frame_index % len(glide_frames)]
             elif self.flight_phase == "landed":
                 cell = self.sheet.crop((0, 0, CELL_W, CELL_H))
             else:
@@ -3342,12 +3352,18 @@ class PetWindow:
                 Image.Resampling.NEAREST,
             )
         if self.drag_flight_active:
-            row_index = ROW_INDEX[FLIGHT_ROW]
-            left = self.flight_frame * CELL_W
-            top = row_index * CELL_H
-            cell = self.sheet.crop(
-                (left, top, left + CELL_W, top + CELL_H)
-            )
+            glide_frames = self.poses.get(FLIGHT_GLIDE_POSE)
+            if glide_frames:
+                cell = glide_frames[
+                    FLIGHT_GLIDE_FRAME % len(glide_frames)
+                ]
+            else:
+                row_index = ROW_INDEX[FLIGHT_ROW]
+                left = self.flight_frame * CELL_W
+                top = row_index * CELL_H
+                cell = self.sheet.crop(
+                    (left, top, left + CELL_W, top + CELL_H)
+                )
             cell = self._pose_cell(cell)
             return cell.resize(
                 (display_w, display_h),
