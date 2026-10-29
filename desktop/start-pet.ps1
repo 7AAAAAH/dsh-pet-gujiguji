@@ -78,7 +78,14 @@ $knownPetExes = @(
 )
 $existingPets = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
   Where-Object {
-    ($knownPetExes -contains $_.ExecutablePath) -or
+    $isCurrentExe = $_.ExecutablePath -and ($_.ExecutablePath -eq $bundledExe)
+    # Kill any legacy pet from any install location, not just this one,
+    # otherwise an old startup shortcut can keep a second overlay alive.
+    (
+      $_.ExecutablePath -and
+      $_.ExecutablePath -match '(dsh-pet-gujiguji|light-feather|mint-budgie)(-\d+\.\d+\.\d+)?\.exe$' -and
+      -not $isCurrentExe
+    ) -or
     ($_.CommandLine -like "*$script*")
   }
 foreach ($existingPet in $existingPets) {

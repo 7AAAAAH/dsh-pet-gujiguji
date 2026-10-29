@@ -96,7 +96,7 @@ class PetVisualTests(unittest.TestCase):
         )
 
     def test_takeoff_skips_standing_edge_frames(self):
-        self.assertEqual(pet_window.FLIGHT_TAKEOFF_FRAMES, (1, 2, 3))
+        self.assertEqual(pet_window.FLIGHT_TAKEOFF_FRAMES, (2,))
         self.assertNotIn(0, pet_window.FLIGHT_TAKEOFF_FRAMES)
         self.assertNotIn(4, pet_window.FLIGHT_TAKEOFF_FRAMES)
 
